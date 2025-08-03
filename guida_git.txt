@@ -1,5 +1,8 @@
 📘 GUIDA RAPIDA GIT PER cabina-app
 
+COMANDO PUSH INTEGRATO:
+git add . && git commit -m "aggiornamento $(date)" && git push origin master
+
 🟢 INIZIALIZZAZIONE PROGETTO (solo la prima volta)
 --------------------------------------------------
 git init
