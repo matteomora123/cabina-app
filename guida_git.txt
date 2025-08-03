@@ -1,0 +1,40 @@
+📘 GUIDA RAPIDA GIT PER cabina-app
+
+🟢 INIZIALIZZAZIONE PROGETTO (solo la prima volta)
+--------------------------------------------------
+git init
+git remote add origin https://github.com/NOMEUTENTE/NOMEREPO.git
+git checkout -b main     (se non esiste ancora)
+git push -u origin main  (primo push)
+
+📦 AGGIUNGERE E INVIARE CAMBIAMENTI
+-----------------------------------
+git add .                                # aggiunge tutti i file modificati
+git commit -m "Messaggio del commit"     # salva i cambiamenti
+git push origin main                     # invia al repository remoto
+
+📥 AGGIORNARE IL PROGETTO DAL REMOTO
+------------------------------------
+git pull origin main                     # prende le ultime modifiche da GitHub
+
+🕵️‍♂️ VERIFICHE
+----------------
+git status                               # mostra i file modificati
+git diff                                 # mostra le modifiche fatte
+git log --oneline                        # mostra lo storico dei commit
+
+🧹 RIMUOVERE FILE GIA' TRACKATI MA ORA IGNORATI
+-----------------------------------------------
+git rm -r --cached nome_cartella         # rimuove dalla cache git
+(es. git rm -r --cached backup)
+
+🔁 CAMBIARE RAMO (branch)
+-------------------------
+git checkout nome-ramo
+git checkout -b nuovo-ramo               # crea nuovo ramo
+
+🧠 ALTRI COMANDI UTILI
+-----------------------
+git clone https://github.com/utente/repo.git     # clona un progetto
+git remote -v                                     # mostra i remoti configurati
+git branch -a                                     # mostra tutti i rami
