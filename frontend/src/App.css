@@ -1,0 +1,50 @@
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 300px;
+  background-color: #f7f7f7;
+  padding: 1rem;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  font-family: sans-serif;
+}
+
+.sidebar input {
+  display: block;
+  margin-bottom: 0.5rem;
+  width: 100%;
+  padding: 5px;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 250px;
+  height: 100vh;
+  background-color: #fff;
+  padding: 15px;
+  z-index: 1001; /* sopra la mappa */
+  overflow-y: auto;
+}
+
+.rotatable-map {
+  transition: transform 0.3s ease;
+  transform-origin: center center;
+}
+
+.leaflet-map-pane {
+  transform-origin: 50% 50% !important;
+}
+
+.sidebar button:hover {
+  background: #0056b3;
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}

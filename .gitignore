@@ -1,0 +1,36 @@
+# === IDE ===
+.idea/
+.name
+
+# === Python cache ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# === Ambienti virtuali ===
+venv/
+.env
+.env.*
+
+# === Node (React o simili) ===
+node_modules/
+dist/
+build/
+
+# === Cartelle locali che NON vuoi su GitHub ===
+backup/
+foto\ satellite/
+
+# === Output di AI o dataset locali ===
+segformer/applied_mask/
+segformer/applied_masks_augmented/
+segformer/images/
+segformer/images_augmented/
+segformer/masks/
+segformer/masks_augmented/
+
+# === Altri ===
+.DS_Store
+Thumbs.db
