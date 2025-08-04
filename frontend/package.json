@@ -9,6 +9,8 @@
     "@testing-library/user-event": "^13.5.0",
     "html2canvas": "^1.4.1",
     "leaflet": "^1.9.4",
+    "leaflet-rotate": "^0.2.8",
+    "leaflet-rotatedmarker": "^0.2.0",
     "leaflet.markercluster": "^1.5.3",
     "maplibre-gl": "^5.6.1",
     "react": "^19.1.0",

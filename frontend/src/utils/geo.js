@@ -1,5 +1,4 @@
 // utils/geo.js
-import L from "leaflet";
 
 /**
  * Converte un punto (px, py) della crop in [lat, lng] usando solo

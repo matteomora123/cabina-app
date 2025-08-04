@@ -7,8 +7,9 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import html2canvas from 'html2canvas';
 import L from "leaflet";
+import "leaflet-rotate";
 import { useMapEvents } from "react-leaflet";
-import { convertPolygonData, pixelToLatLng } from './utils/geo.js';
+import { convertPolygonData } from './utils/geo.js';
 
 // -- ICON
 const blueIcon = new L.Icon({
@@ -240,11 +241,34 @@ function SetView({ coords }) {
   return null;
 }
 
+function rotatePolygonCoords(points, map, angleDeg) {
+    if (!Array.isArray(points) || !points.length) return points;
+
+    const center = map.getCenter();
+    const angleRad = (angleDeg * Math.PI) / 180;
+
+    return points.map(([lat, lng]) => {
+        const projected = map.project([lat, lng], map.getZoom());
+        const centerProjected = map.project(center, map.getZoom());
+
+        const dx = projected.x - centerProjected.x;
+        const dy = projected.y - centerProjected.y;
+
+        const rotatedX = dx * Math.cos(angleRad) - dy * Math.sin(angleRad);
+        const rotatedY = dx * Math.sin(angleRad) + dy * Math.cos(angleRad);
+
+        return [centerProjected.x + rotatedX, centerProjected.y + rotatedY];
+    });
+}
+
+
 function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, setZoomLevel, zoomLevelForced }) {
     console.log("MapView polygonData:", polygonData);
   return (
     <MapContainer
         center={coords}
+        rotate={true}
+        touchRotate={true}
         zoom={6}
         className="rotatable-map"
         style={{ height: "100vh", width: "100%" }}
@@ -276,7 +300,6 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
         </MarkerClusterGroup>
       )}
       {polygonData && polygonData.map((poly, i) => {
-          console.log(`Polygon #${i} (${poly.label})`, poly.points);
           return (
             <Polygon
               key={i}
@@ -448,6 +471,11 @@ function App() {
   const [isAnalisiLoading, setIsAnalisiLoading] = useState(false);
   const mapRef = useRef(null);
   const [rotation, setRotation] = useState(0);
+  useEffect(() => {
+      if (mapRef.current) {
+          mapRef.current.setBearing(rotation);
+      }
+  }, [rotation]);
   const [hideMarkers, setHideMarkers] = useState(false);
 
   useEffect(() => {
@@ -492,6 +520,13 @@ function App() {
     const data2 = await res2.json();
     console.log("Risposta completa dal backend:", data2);
 
+    /*const poligoniRuotati = data2.poligoni.map(data => {
+        return {
+            ...data,
+            points: rotatePolygonCoords(data.points, mapRef.current, rotation)
+        }
+    })
+    const poligoniFromBackend = rotation !== 0 ? poligoniRuotati : data2.poligoni;*/
     const poligoniFromBackend = data2.poligoni;
 
     if (!poligoniFromBackend) {
@@ -499,7 +534,6 @@ function App() {
       setIsAnalisiLoading(false);
       return;
     }
-
     const converted = convertPolygonData(poligoniFromBackend, captureParams);
     // Aspetta che la mappa abbia finito di centrarsi
     const map = mapRef.current;
@@ -602,9 +636,9 @@ function App() {
 
       {/* ROTAZIONE */}
       <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 1000 }}>
-        <button onClick={() => setRotation(rotation - 5)}>↺ Ruota -5°</button>
-        <button onClick={() => setRotation(rotation + 5)}>↻ Ruota +5°</button>
-        <button onClick={() => setRotation(0)}>⟳ Reset</button>
+         <button onClick={() => setRotation(r => r - 5)}>↺ Ruota -5°</button>
+         <button onClick={() => setRotation(r => r + 5)}>↻ Ruota +5°</button>
+         <button onClick={() => setRotation(0)}>⟳ Reset</button>
       </div>
 
       {/* BUSSOLA */}
