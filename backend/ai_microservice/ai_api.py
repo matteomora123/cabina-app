@@ -24,8 +24,8 @@ ID_TO_CLASS = {c["id"]: c for c in CVAT_CLASSES}
 PALETTE = {c["id"]: tuple(int(c["color"].lstrip("#")[i:i+2], 16) for i in (0, 2, 4)) for c in CVAT_CLASSES}
 
 # Percorsi modello e output
-MODEL_PATH = r"C:\Users\matte\PycharmProjects\cabina-app\segformer\segformer_finetuned"
-OUTPUT_DIR = r"C:\Users\matte\PycharmProjects\cabina-app\backend\ai_microservice\output"
+MODEL_PATH = r"..\segformer\segformer_finetuned"
+OUTPUT_DIR = r"ai_microservice\output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("Caricamento modello e feature_extractor...")

@@ -248,9 +248,9 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
         zoom={6}
         className="rotatable-map"
         style={{ height: "100vh", width: "100%" }}
-        whenCreated={(mapInstance) => {
-          mapRef.current = mapInstance;
-          setZoomLevel(mapInstance.getZoom()); // <- aggiungi questa riga
+        whenReady={(mapInstance) => {
+          mapRef.current = mapInstance.target;
+          setZoomLevel(mapInstance.target.getZoom()); // <- aggiungi questa riga
       }}
     >
        <CenterTracker setCenterCoords={setCenterCoords} />
