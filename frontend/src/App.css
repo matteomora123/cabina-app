@@ -4,11 +4,10 @@
 }
 
 .sidebar {
-  width: 300px;
   background-color: #f7f7f7;
   padding: 1rem;
-  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
   font-family: sans-serif;
+  box-shadow: 7px 1px 6px -2px rgb(41 41 41 / 86%);
 }
 
 .sidebar input {

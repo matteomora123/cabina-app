@@ -503,13 +503,7 @@ function App() {
     const converted = convertPolygonData(poligoniFromBackend, captureParams);
     // Aspetta che la mappa abbia finito di centrarsi
     const map = mapRef.current;
-    if (map) {
-      map.once('moveend', () => {
-        setPolygonData(converted);
-      });
-    } else {
-      setPolygonData(converted); // fallback
-    }
+    setPolygonData(converted); // fallback
 
     console.log("Poligoni convertiti:", converted);
 
@@ -525,21 +519,13 @@ function App() {
   return (
     <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* SIDEBAR SINISTRA */}
-      <div style={{
-        width: '300px',
-        backgroundColor: '#ffffff',
-        padding: '10px',
-        borderRight: '1px solid #ccc',
-        overflowY: 'auto',
-        zIndex: 1101
-      }}>
-        <MapControls
+      <MapControls
           lat={lat} setLat={setLat}
           lng={lng} setLng={setLng}
           idCabina={idCabina} setIdCabina={setIdCabina}
           setCoords={(newCoords) => {
-            setCoords(newCoords);
-            // setAutoZoom(false); // ❌ niente zoom automatico
+              setCoords(newCoords);
+              // setAutoZoom(false); // ❌ niente zoom automatico
           }}
           setPolygonData={setPolygonData}
           setCaptureMode={setCaptureMode}
@@ -549,22 +535,13 @@ function App() {
           isAnalisiLoading={isAnalisiLoading}
           centerCoords={centerCoords}
           captureParams={captureParams}
-        />
-
-      </div>
+      />
 
       {/* MAPPA CENTRALE */}
       <div
         className="map-rotator"
         style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: '140vw',
-          height: '100vh',
-          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
-          transformOrigin: 'center center',
-          zIndex: 0,
+          width: '100%'
         }}
       >
         <MapView
