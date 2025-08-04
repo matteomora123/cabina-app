@@ -22,6 +22,7 @@ build/
 # === Cartelle locali che NON vuoi su GitHub ===
 backup/
 foto\ satellite/
+backend/ai_microservice/output/
 
 # === Output di AI o dataset locali ===
 segformer/applied_mask/
