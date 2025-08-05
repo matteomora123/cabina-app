@@ -21,7 +21,7 @@ build/
 
 # === Cartelle locali che NON vuoi su GitHub ===
 backup/
-foto/satellite/
+foto\ satellite/
 backend/ai_microservice/output/
 backend/armonizzazione_single_cabin
 
