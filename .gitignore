@@ -23,7 +23,7 @@ build/
 backup/
 foto\ satellite/
 backend/ai_microservice/output/
-backend/armonizzazione_single_cabin
+backend/armonizzazione_single_cabin/
 
 # === Output di AI o dataset locali ===
 segformer/applied_mask/
