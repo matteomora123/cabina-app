@@ -648,17 +648,18 @@ function App() {
         currentLat = result.new_lat;
         currentLng = result.new_lng;
 
-        if (result.done) {
-          // Mostra marker verde finale
           setArmonizedMarker({
             lat: currentLat,
             lng: currentLng,
             chk: idCabina
           });
-          alert("Armonizzazione completata");
+          setHideMarkers(false); // <- aggiunto
+          setCoords([currentLat, currentLng]); // <- centra la mappa
+          if (mapRef.current) {
+            mapRef.current.setView([currentLat, currentLng], 18);
+          }
           break;
         }
-      }
     }
 
   return (
