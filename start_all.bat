@@ -8,5 +8,4 @@ start cmd /k "cd /d backend && uvicorn ai_microservice.ai_api:app --port 9000 --
 echo Avvio Frontend (React)...
 start cmd /k "cd /d frontend && npm start"
 
-echo Tutto avviato.
 pause

@@ -8,23 +8,37 @@ router = APIRouter()
 
 @router.post("/update_centered_coord")
 async def update_centered_coord(req: CoordinateOptimizationRequest):
-    """
-    Esegue un singolo step di ottimizzazione e dice se continuare.
-    Riceve anche un'immagine base64 catturata dal frontend.
-    """
     try:
         print(f"[SERVER] Avvio ottimizzazione per cabina {req.chk}")
 
+        # 1. Alla PRIMA chiamata (iterazione 0): prendi SEMPRE coordinate da DB!
+        if req.lat is None or req.lng is None:  # OPPURE: controlla se c'è un flag 'first_iteration'
+            async with SessionLocal() as session:
+                res = await session.execute(
+                    text("SELECT ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng FROM public.cabine WHERE chk = :chk"),
+                    {"chk": req.chk}
+                )
+                row = res.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Cabina non trovata")
+                lat_db = row.lat
+                lng_db = row.lng
+        else:
+            lat_db = req.lat
+            lng_db = req.lng
+
+        # 2. Chiamata a ottimizza_coordinata con coordinate giuste
         result = await ottimizza_coordinata(
             CoordinateOptimizationRequest(
                 chk=req.chk,
                 zoom=req.zoom,
                 crop_size=req.crop_size,
                 image=req.image,
-                lat=req.lat,
-                lng=req.lng
+                lat=lat_db,
+                lng=lng_db
             )
         )
+        ...
 
         # Condizione di stop
         done = result.final_distance_px < 20

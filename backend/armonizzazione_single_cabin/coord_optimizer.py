@@ -52,10 +52,10 @@ def pixel_to_latlng(px, py, centerLat, centerLng, zoom, crop_size=300, zoom_ref=
     scale = 2 ** (zoom_ref - zoom)
     cx = crop_size / 2
     cy = crop_size / 2
-    dx = (px - cx) * meters_per_pixel * scale
-    dy = (py - cy) * meters_per_pixel * scale
-    delta_lat = -dy / 110540
-    delta_lng = dx / (111320 * math.cos(math.radians(centerLat)))
+    dx = (px - cx) * scale
+    dy = (py - cy) * scale
+    delta_lat = -dy * meters_per_pixel / 110540
+    delta_lng = dx * meters_per_pixel / (111320 * math.cos(math.radians(centerLat)))
     lat = centerLat + delta_lat
     lng = centerLng + delta_lng
     return lat, lng
@@ -74,7 +74,7 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
 
         # 1. Validazione immagine
         if not req.image or len(req.image) < 50:
-            print("❌ Immagine non valida (vuota o troppo corta)")
+            print("Immagine non valida (vuota o troppo corta)")
             raise HTTPException(status_code=400, detail="Immagine base64 mancante o troppo corta")
 
         # 2. Coordinate iniziali
@@ -88,14 +88,13 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
                     raise HTTPException(status_code=404, detail="Cabina non trovata")
                 data = res.json()
                 lat, lng = data["lat"], data["lng"]
-        print(f"✅ Coordinate iniziali: lat={lat}, lng={lng}")
+        print(f"Coordinate iniziali: lat={lat}, lng={lng}")
 
         zoom = req.zoom
         crop_size = req.crop_size
-        density_prev = 0
 
         # 3. Chiamata al microservizio AI
-        print("🤖 Invio immagine e coordinate a /segmenta_ai...")
+        print("Invio immagine e coordinate a /segmenta_ai...")
         async with httpx.AsyncClient() as client:
             payload = {
                 "image": req.image,
@@ -109,41 +108,44 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
             print(f"Risposta AI status: {seg_res.status_code}")
             seg_data = seg_res.json()
             poligoni = seg_data.get("poligoni", [])
-            print(f"📦 Poligoni ricevuti: {len(poligoni)}")
+            print(f"Poligoni ricevuti: {len(poligoni)}")
 
-        # 4. Filtra poligoni rilevanti
-        rilevanti = [p for p in poligoni if p["label"] in {"Locale AT/MT", "Stalli AT"}]
-        print(f"🎯 Poligoni rilevanti: {len(rilevanti)}")
-        if not rilevanti:
-            print("⚠️ Nessun poligono rilevante trovato, ritorno coordinate originali")
+        # 4. Filtra solo poligoni "Stalli AT"
+        stalli_at = [p for p in poligoni if p["label"] == "Stalli AT" and len(p["points"]) >= 3]
+        print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
+        if not stalli_at:
+            print("Nessun poligono 'Stalli AT' trovato, ritorno coordinate originali")
             return CoordinateOptimizationResponse(
                 new_lat=lat,
                 new_lng=lng,
                 iterations=1,
                 final_distance_px=0,
                 density_score=0,
-                message="Nessun poligono rilevante trovato"
+                message="Nessun poligono 'Stalli AT' trovato"
             )
 
-        # 5. Unione poligoni
-        polygons = [Polygon(p["points"]) for p in rilevanti if len(p["points"]) >= 3]
-        print(f"Poligoni convertiti in shapely: {len(polygons)}")
-        union = unary_union(polygons)
-        centro = union.centroid
-        print(f"Centroid pixel coords: x={centro.x}, y={centro.y}")
+        # 5. Trova il poligono più grande (per area)
+        shapely_stalli = [Polygon(p["points"]) for p in stalli_at]
+        aree = [poly.area for poly in shapely_stalli]
+        idx_max = aree.index(max(aree))
+        poligono_max = shapely_stalli[idx_max]
+        print(f"Selezionato poligono più grande, area: {poligono_max.area}")
 
-        # Coordinate lat/lng
+        # 6. Centroide del poligono più grande
+        centro = poligono_max.centroid
+        print(f"Centroide pixel coords: x={centro.x}, y={centro.y}")
+
+        # 7. Coordinate lat/lng dal centroide
         centro_lat, centro_lng = pixel_to_latlng(centro.x, centro.y, lat, lng, zoom, crop_size)
         print(f"Nuove coordinate calcolate: lat={centro_lat}, lng={centro_lng}")
 
-        # 6. Calcola distanza
+        # 8. Calcola distanza dal centro crop (in pixel)
         px, py = latlng_to_pixel(centro_lat, centro_lng, lat, lng, zoom, crop_size)
         dist = distance_to_crop_center(px, py, crop_size)
         print(f"Distanza dal centro crop: {dist:.2f} px")
 
-        # 7. Densità pixel
-        pixel_count = sum(len(p["points"]) for p in rilevanti)
-        density_prev = pixel_count
+        # 9. Densità pixel (numero di vertici del poligono)
+        density_prev = len(stalli_at[idx_max]["points"])
         print(f"Density score: {density_prev}")
 
         print("=== Ottimizzazione completata ===\n")
@@ -153,13 +155,12 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
             iterations=1,
             final_distance_px=dist,
             density_score=density_prev,
-            message="Step di ottimizzazione completato"
+            message="Ottimizzazione basata sullo 'Stalli AT' più grande"
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        print(f"💥 Errore durante ottimizzazione: {e}")
+        print(f"Errore durante ottimizzazione: {e}")
         raise HTTPException(status_code=500, detail=f"Errore durante ottimizzazione: {str(e)}")
 
 
