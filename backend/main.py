@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
-
-from schemas import AIRequest  # Usa il modello che preferisci!
+from armonizzazione import router as armonizzazione_router
+from schemas import AIRequest  #
+from db import SessionLocal
 import httpx
 
 app = FastAPI()
@@ -32,11 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# DB Connessione
-# DATABASE_URL = "postgresql+asyncpg://postgres:xxxx@localhost:5432/cabine_primarie"
-DATABASE_URL = "postgresql+asyncpg://postgres:1234@localhost:5432/cabine_primarie"
-engine = create_async_engine(DATABASE_URL, echo=True)
-SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+app.include_router(armonizzazione_router.router)
 
 # ===================== ENDPOINTS =======================
 
