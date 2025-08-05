@@ -1,8 +1,7 @@
 // utils/geo.js
 
 /**
- * Converte un punto (px, py) della crop in [lat, lng] usando solo
- * centro, zoom e dimensione crop catturati al momento dello scatto.
+ * Converte un punto (px, py) della crop in [lat, lng] usando la proiezione Web Mercator.
  */
 export function pixelToLatLng(
   px,
@@ -10,34 +9,41 @@ export function pixelToLatLng(
   centerLat,
   centerLng,
   zoom,
-  cropSize = 300,
-  zoomRef = 19
+  cropSize = 300
 ) {
   centerLat = parseFloat(centerLat);
   centerLng = parseFloat(centerLng);
   zoom = parseInt(zoom);
   cropSize = parseInt(cropSize);
-  zoomRef = parseInt(zoomRef);
 
-  const earthCircumference = 40075016.686; // m
-  const metersPerPixel =
-    (earthCircumference * Math.cos((centerLat * Math.PI) / 180)) /
-    Math.pow(2, zoom + 8);
+  const tileSize = 256;
+  const worldSize = tileSize * Math.pow(2, zoom);
 
-  // se lo scatto è a zoom diverso da zoomRef, correggi la scala
-  const scaleCorrection = Math.pow(2, zoomRef - zoom);
+  // Helpers
+  function latLngToGlobalPx(lat, lng) {
+    const x = (lng + 180.0) / 360.0 * worldSize;
+    const sinLat = Math.sin(lat * Math.PI / 180);
+    const y =
+      (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * worldSize;
+    return [x, y];
+  }
+  function globalPxToLatLng(x, y) {
+    const lng = (x / worldSize) * 360.0 - 180.0;
+    const n = Math.PI - (2.0 * Math.PI * y) / worldSize;
+    const lat = (180 / Math.PI) * Math.atan(Math.sinh(n));
+    return [lat, lng];
+  }
 
-  const dx = (px - cropSize / 2) * scaleCorrection;
-  const dy = (py - cropSize / 2) * scaleCorrection;
-
-  const deltaLng =
-    (dx * metersPerPixel) / (111320 * Math.cos((centerLat * Math.PI) / 180));
-  const deltaLat = -(dy * metersPerPixel) / 110540;
-
-  const lat = centerLat + deltaLat;
-  const lng = centerLng + deltaLng;
-
-  return [lat, lng];
+  // Centro crop in pixel globali
+  const [centerX, centerY] = latLngToGlobalPx(centerLat, centerLng);
+  // Offset locali
+  const dx = px - cropSize / 2;
+  const dy = py - cropSize / 2;
+  // Nuova posizione in pixel globali
+  const pointX = centerX + dx;
+  const pointY = centerY + dy;
+  // Conversione inversa
+  return globalPxToLatLng(pointX, pointY);
 }
 
 /**
@@ -47,14 +53,13 @@ export function pixelToLatLng(
 export function convertPolygonData(polygons = [], captureParams = {}) {
   const cropSize = parseInt(captureParams.crop_width ?? 300, 10);
   const zoom = parseInt(captureParams.zoom, 10);
-  const zoomRef = parseInt(captureParams.zoomRef ?? captureParams.zoom ?? 19, 10); // <—
   const centerLat = parseFloat(captureParams.centerLat);
   const centerLng = parseFloat(captureParams.centerLng);
 
   return polygons.map((poly) => ({
     ...poly,
     points: (poly.points || []).map(([x, y]) =>
-      pixelToLatLng(x, y, centerLat, centerLng, zoom, cropSize, zoomRef)
+      pixelToLatLng(x, y, centerLat, centerLng, zoom, cropSize)
     ),
   }));
 }
