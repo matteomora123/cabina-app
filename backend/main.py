@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from armonizzazione import router as armonizzazione_router
+from armonizzazione_single_cabin import router as armonizzazione_router
 from schemas import AIRequest  #
 from db import SessionLocal
 import httpx

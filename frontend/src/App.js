@@ -1,3 +1,5 @@
+// App.js
+
 import React, { useState, useRef, useEffect } from "react";
 import { MapContainer, TileLayer, useMap, Polygon, Tooltip, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -55,8 +57,8 @@ function ZoomTracker({ setZoomLevel }) {
 function MapControls({
   lat, setLat, lng, setLng, idCabina, setIdCabina,
   setCoords, setPolygonData, setCaptureMode, capturedImage, setCapturedImage,
-  analizzaCabina, isAnalisiLoading, centerCoords,
-  captureParams
+  setArmonizedMarker, analizzaCabina, isAnalisiLoading, centerCoords,
+  captureParams, armonizzaCabinaAuto // <-- aggiunto qui
 }) {
   const [error, setError] = useState("");
 
@@ -162,6 +164,23 @@ function MapControls({
     >
       📸 Scatta Foto
     </button>
+
+    <button
+      onClick={armonizzaCabinaAuto}
+      style={{
+        marginTop: '10px',
+        width: '100%',
+        background: '#10b981',
+        color: '#fff',
+        fontWeight: 'bold',
+        border: 'none',
+        borderRadius: 5,
+        padding: 8
+      }}
+    >
+      📍 Armonizza Cabina
+    </button>
+
       {capturedImage && (
           <div style={{
             marginTop: '20px',
@@ -262,7 +281,7 @@ function rotatePolygonCoords(points, map, angleDeg) {
 }
 
 
-function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, setZoomLevel, zoomLevelForced }) {
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, zoomLevelForced }) {
     console.log("MapView polygonData:", polygonData);
   return (
     <MapContainer
@@ -299,6 +318,27 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
           ))}
         </MarkerClusterGroup>
       )}
+        {/* Marker verde per nuova coordinata armonizzata */}
+        {!hideMarkers && armonizedMarker && (
+          <Marker
+            position={[armonizedMarker.lat, armonizedMarker.lng]}
+            icon={new L.Icon({
+              iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
+              shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+              iconSize: [25, 41],
+              iconAnchor: [12, 41],
+              popupAnchor: [1, -34],
+              shadowSize: [41, 41],
+            })}
+          >
+            <Popup>
+              <strong>Nuova posizione armonizzata</strong><br />
+              CHK: {armonizedMarker.chk}<br />
+              Lat: {armonizedMarker.lat.toFixed(6)}<br />
+              Lng: {armonizedMarker.lng.toFixed(6)}
+            </Popup>
+          </Marker>
+        )}
       {polygonData && polygonData.map((poly, i) => {
           return (
             <Polygon
@@ -464,6 +504,7 @@ function App() {
   const [zoomLevel, setZoomLevel] = useState(6);
   const [polygonData, setPolygonData] = useState(null);
   const [cabine, setCabine] = useState([]);
+  const [armonizedMarker, setArmonizedMarker] = useState(null);
   // const [autoZoom, setAutoZoom] = useState(false);
   const [captureMode, setCaptureMode] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
@@ -549,6 +590,76 @@ function App() {
   setIsAnalisiLoading(false);
 }
 
+ async function armonizzaCabinaAuto() {
+      if (!idCabina) {
+        alert("Seleziona prima una cabina");
+        return;
+      }
+
+      let currentLat = parseFloat(lat);
+      let currentLng = parseFloat(lng);
+      let maxIter = 5;
+
+      for (let step = 1; step <= maxIter; step++) {
+        // 1. Cattura invisibile dalla mappa attuale
+        const leafletElement = document.querySelector('.leaflet-container');
+        const fullCanvas = await html2canvas(leafletElement, {
+          useCORS: true,
+          backgroundColor: null,
+          allowTaint: true,
+          logging: false,
+          scale: 1,
+        });
+
+        const cropSize = 300;
+        const rect = leafletElement.getBoundingClientRect();
+        const scaleFactor = fullCanvas.width / rect.width;
+        const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+        const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+
+        const cropped = document.createElement('canvas');
+        cropped.width = cropSize;
+        cropped.height = cropSize;
+        const ctx = cropped.getContext('2d');
+        ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+
+        const imageData = cropped.toDataURL();
+
+        // 2. Chiamata API per step di ottimizzazione
+        const resp = await fetch(`http://localhost:8000/update_centered_coord`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chk: idCabina,
+            zoom: 18,
+            crop_size: cropSize,
+            image: imageData
+          })
+        });
+
+        const result = await resp.json();
+        console.log("Step armonizzazione:", result);
+
+        if (!resp.ok) {
+          alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
+          return;
+        }
+
+        currentLat = result.new_lat;
+        currentLng = result.new_lng;
+
+        if (result.done) {
+          // Mostra marker verde finale
+          setArmonizedMarker({
+            lat: currentLat,
+            lng: currentLng,
+            chk: idCabina
+          });
+          alert("Armonizzazione completata");
+          break;
+        }
+      }
+    }
 
   return (
     <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -565,6 +676,8 @@ function App() {
           setCaptureMode={setCaptureMode}
           capturedImage={capturedImage}
           setCapturedImage={setCapturedImage}
+          setArmonizedMarker={setArmonizedMarker}
+          armonizzaCabinaAuto={armonizzaCabinaAuto}
           analizzaCabina={analizzaCabina}
           isAnalisiLoading={isAnalisiLoading}
           centerCoords={centerCoords}
@@ -585,6 +698,7 @@ function App() {
           // autoZoom={autoZoom}
           mapRef={mapRef}
           setCenterCoords={setCenterCoords}
+          armonizedMarker={armonizedMarker}
           hideMarkers={hideMarkers}
           setZoomLevel={setZoomLevel}
         />
