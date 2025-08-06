@@ -58,10 +58,17 @@ function MapControls({
   lat, setLat, lng, setLng, idCabina, setIdCabina,
   setCoords, setPolygonData, setCaptureMode, capturedImage, setCapturedImage,
   setArmonizedMarker, analizzaCabina, isAnalisiLoading, centerCoords,
-  captureParams, armonizzaCabinaAuto // <-- aggiunto qui
+  captureParams, armonizzaCabinaAuto, mapRef, setPendingFlyTo, setZoomLevel
 }) {
   const [error, setError] = useState("");
-
+  function resetAllFieldsIfLocked() {
+  // Se almeno un campo è oscurato/bloccato, svuota tutto
+  if (idCabina !== "" || lat !== "" || lng !== "") {
+        setLat("");
+        setLng("");
+        setIdCabina("");
+      }
+    }
   const isCoordMode = lat !== "" || lng !== "";
   const isCabinaMode = idCabina !== "";
 
@@ -81,8 +88,7 @@ function MapControls({
         setError("Latitudine o longitudine non valida.");
         return;
       }
-
-      setCoords([latNum, lngNum]);
+      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
       setPolygonData(null);
       return;
     }
@@ -93,7 +99,7 @@ function MapControls({
         const data = await res.json();
 
         if (data.lat && data.lng) {
-          setCoords([data.lat, data.lng]);
+          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 18 });
           setLat(data.lat.toString());
           setLng(data.lng.toString());
           setPolygonData(null);
@@ -113,31 +119,71 @@ function MapControls({
   return (
     <div className="sidebar">
       <h2>Dashboard</h2>
-      <label>
-        Latitudine:
-        <input
-          value={lat}
-          onChange={e => setLat(e.target.value)}
-          disabled={idCabina !== ""}
-        />
-      </label>
-      <label>
-        Longitudine:
-        <input
-          value={lng}
-          onChange={e => setLng(e.target.value)}
-          disabled={idCabina !== ""}
-        />
-      </label>
-      <label>
-        Codice cabina:
-        <input
-          value={idCabina}
-          onChange={e => setIdCabina(e.target.value)}
-          disabled={lat !== "" || lng !== ""}
-        />
-      </label>
-      <button onClick={handleSubmit}>Vai</button>
+      <style>{`
+          input[disabled] {
+            pointer-events: none;
+          }
+        `}</style>
+
+        <div style={{ width: "100%", marginBottom: 8 }}>
+          <span
+            onClick={() => {
+              if (idCabina !== "" || lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Latitudine:</label>
+            <input
+              value={lat}
+              onChange={e => setLat(e.target.value)}
+              disabled={idCabina !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+          <span
+            onClick={() => {
+              if (idCabina !== "" || lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Longitudine:</label>
+            <input
+              value={lng}
+              onChange={e => setLng(e.target.value)}
+              disabled={idCabina !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+          <span
+            onClick={() => {
+              if (lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Codice cabina:</label>
+            <input
+              value={idCabina}
+              onChange={e => setIdCabina(e.target.value)}
+              disabled={lat !== "" || lng !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+        </div>
+
+        <button onClick={handleSubmit} style={{ width: '100%', marginBottom: 12 }}>Vai</button>
+
       {error && <div style={{ color: "red", marginTop: "10px" }}>{error}</div>}
       <hr />
       <button
@@ -250,16 +296,6 @@ function MapControls({
   );
 }
 
-function SetView({ coords }) {
-  const map = useMap();
-  useEffect(() => {
-    if (coords && coords.length === 2) {
-      map.panTo(coords);  // Usa panTo per evitare zoom indesiderati
-    }
-  }, [coords, map]);
-  return null;
-}
-
 function rotatePolygonCoords(points, map, angleDeg) {
     if (!Array.isArray(points) || !points.length) return points;
 
@@ -281,11 +317,11 @@ function rotatePolygonCoords(points, map, angleDeg) {
 }
 
 
-function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, zoomLevelForced }) {
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel }) {
     console.log("MapView polygonData:", polygonData);
   return (
     <MapContainer
-        center={coords}
+        center={coords} // oppure la tua posizione iniziale
         rotate={true}
         touchRotate={true}
         zoom={6}
@@ -303,7 +339,7 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
         attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
         maxZoom={22}
       />
-      <SetView coords={coords}/>
+
       {!hideMarkers && (
         <MarkerClusterGroup>
           {cabine.map((cab, idx) => (
@@ -500,8 +536,8 @@ function App() {
   const [lng, setLng] = useState("");
   const [idCabina, setIdCabina] = useState("");
   const [coords, setCoords] = useState([41.9028, 12.4964]);
-  const [centerCoords, setCenterCoords] = useState([0, 0]);
-  const [zoomLevel, setZoomLevel] = useState(6);
+  const [centerCoords, setCenterCoords] = useState([0, 0]); // Roma
+  const [zoomLevel, setZoomLevel] = useState(6);  // Zoom iniziale
   const [polygonData, setPolygonData] = useState(null);
   const [cabine, setCabine] = useState([]);
   const [armonizedMarker, setArmonizedMarker] = useState(null);
@@ -510,6 +546,7 @@ function App() {
   const [capturedImage, setCapturedImage] = useState(null);
   const [captureParams, setCaptureParams] = useState(null);
   const [isAnalisiLoading, setIsAnalisiLoading] = useState(false);
+  const [pendingFlyTo, setPendingFlyTo] = useState(null); // [coords, zoom]
   const mapRef = useRef(null);
   const [rotation, setRotation] = useState(0);
   useEffect(() => {
@@ -518,7 +555,15 @@ function App() {
       }
   }, [rotation]);
   const [hideMarkers, setHideMarkers] = useState(false);
-
+  useEffect(() => {
+  if (mapRef.current && pendingFlyTo) {
+    const { coords, zoom } = pendingFlyTo;
+    mapRef.current.flyTo(coords, zoom, { animate: true, duration: 1.5 });
+    setCoords(coords);
+    setZoomLevel(zoom);
+    setPendingFlyTo(null);
+  }
+}, [pendingFlyTo]);
   useEffect(() => {
     fetch("http://localhost:8000/cabine")
       .then((res) => res.json())
@@ -675,7 +720,10 @@ function App() {
           }}
           setPolygonData={setPolygonData}
           setCaptureMode={setCaptureMode}
+          mapRef={mapRef}
           capturedImage={capturedImage}
+          setZoomLevel={setZoomLevel}
+          setPendingFlyTo={setPendingFlyTo}
           setCapturedImage={setCapturedImage}
           setArmonizedMarker={setArmonizedMarker}
           armonizzaCabinaAuto={armonizzaCabinaAuto}
