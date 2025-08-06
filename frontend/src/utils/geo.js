@@ -1,5 +1,3 @@
-// utils/geo.js
-
 /**
  * Converte un punto (px, py) della crop in [lat, lng] usando la proiezione Web Mercator.
  */
@@ -19,7 +17,6 @@ export function pixelToLatLng(
   const tileSize = 256;
   const worldSize = tileSize * Math.pow(2, zoom);
 
-  // Helpers
   function latLngToGlobalPx(lat, lng) {
     const x = (lng + 180.0) / 360.0 * worldSize;
     const sinLat = Math.sin(lat * Math.PI / 180);

@@ -30,9 +30,6 @@ class CoordinateOptimizationResponse(BaseModel):
 # ---- Funzioni di supporto (Web Mercator pixel conversion locali crop) ----
 
 def latlng_to_local_crop_pixel(lat, lng, centerLat, centerLng, zoom, crop_size=300):
-    """
-    Converte coordinate lat/lng in pixel locali della crop 300x300 centrata su centerLat,centerLng
-    """
     tile_size = 256
     world_size = tile_size * (2 ** zoom)
 
@@ -42,11 +39,8 @@ def latlng_to_local_crop_pixel(lat, lng, centerLat, centerLng, zoom, crop_size=3
         y = (0.5 - math.log((1 + sin_lat) / (1 - sin_lat)) / (4 * math.pi)) * world_size
         return x, y
 
-    # Centro crop in pixel globali
     center_x, center_y = latlng_to_global_px(centerLat, centerLng)
-    # Punto da convertire in pixel globali
     px, py = latlng_to_global_px(lat, lng)
-    # Offset rispetto al centro crop (il centro della crop è crop_size/2, crop_size/2)
     dx = px - center_x
     dy = py - center_y
     local_px = crop_size / 2 + dx
@@ -54,9 +48,6 @@ def latlng_to_local_crop_pixel(lat, lng, centerLat, centerLng, zoom, crop_size=3
     return local_px, local_py
 
 def local_crop_pixel_to_latlng(px, py, centerLat, centerLng, zoom, crop_size=300):
-    """
-    Converte pixel locali della crop in lat/lng, dato il centro crop e zoom
-    """
     tile_size = 256
     world_size = tile_size * (2 ** zoom)
 
@@ -72,12 +63,9 @@ def local_crop_pixel_to_latlng(px, py, centerLat, centerLng, zoom, crop_size=300
         lat = math.degrees(math.atan(math.sinh(n)))
         return lat, lng
 
-    # Centro crop in pixel globali
     center_x, center_y = latlng_to_global_px(centerLat, centerLng)
-    # Offset rispetto al centro crop
     dx = px - (crop_size / 2)
     dy = py - (crop_size / 2)
-    # Calcolo punto in pixel globali
     point_x = center_x + dx
     point_y = center_y + dy
     lat, lng = global_px_to_latlng(point_x, point_y)
@@ -116,35 +104,45 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
         zoom = req.zoom
         crop_size = req.crop_size
 
-        # 3. Chiamata al microservizio AI
-        print("Invio immagine e coordinate a /segmenta_ai...")
-        async with httpx.AsyncClient() as client:
-            payload = {
-                "image": req.image,
-                "lat": lat,
-                "lng": lng,
-                "zoom": zoom,
-                "crop_width": crop_size,
-                "crop_height": crop_size,
-            }
-            seg_res = await client.post("http://localhost:9000/segmenta_ai", json=payload)
-            print(f"Risposta AI status: {seg_res.status_code}")
-            seg_data = seg_res.json()
-            poligoni = seg_data.get("poligoni", [])
-            print(f"Poligoni ricevuti: {len(poligoni)}")
+        MAX_ATTEMPTS = 2
+        attempt = 0
+        found = False
+        stalli_at = []
+        seg_data = None
 
-        # 4. Filtra solo poligoni "Stalli AT"
-        stalli_at = [p for p in poligoni if p["label"] == "Stalli AT" and len(p["points"]) >= 3]
-        print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
-        if not stalli_at:
-            print("Nessun poligono 'Stalli AT' trovato, ritorno coordinate originali")
+        # 3. Tentativi di chiamata a /segmenta_ai (max 2 tentativi)
+        while attempt < MAX_ATTEMPTS and not found:
+            print(f"Tentativo segmentazione AI n.{attempt+1}")
+            async with httpx.AsyncClient() as client:
+                payload = {
+                    "image": req.image,
+                    "lat": lat,
+                    "lng": lng,
+                    "zoom": zoom,
+                    "crop_width": crop_size,
+                    "crop_height": crop_size,
+                }
+                seg_res = await client.post("http://localhost:9000/segmenta_ai", json=payload)
+                print(f"Risposta AI status: {seg_res.status_code}")
+                seg_data = seg_res.json()
+                poligoni = seg_data.get("poligoni", [])
+                print(f"Poligoni ricevuti: {len(poligoni)}")
+                stalli_at = [p for p in poligoni if p["label"] == "Stalli AT" and len(p["points"]) >= 3]
+                print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
+                if stalli_at:
+                    found = True
+                    break
+            attempt += 1
+
+        if not found:
+            print("Nessun poligono 'Stalli AT' trovato anche dopo 2 tentativi, ritorno coordinate originali")
             return CoordinateOptimizationResponse(
                 new_lat=lat,
                 new_lng=lng,
-                iterations=1,
+                iterations=attempt,
                 final_distance_px=0,
                 density_score=0,
-                message="Nessun poligono 'Stalli AT' trovato"
+                message="Nessun poligono 'Stalli AT' trovato dopo 2 tentativi"
             )
 
         # 5. Trova il poligono più grande (per area)
@@ -181,7 +179,7 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
         return CoordinateOptimizationResponse(
             new_lat=centro_lat,
             new_lng=centro_lng,
-            iterations=1,
+            iterations=attempt + 1,
             final_distance_px=dist,
             density_score=density_prev,
             message="Ottimizzazione basata sullo 'Stalli AT' più grande"
@@ -191,4 +189,3 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
     except Exception as e:
         print(f"Errore durante ottimizzazione: {e}")
         raise HTTPException(status_code=500, detail=f"Errore durante ottimizzazione: {str(e)}")
-
