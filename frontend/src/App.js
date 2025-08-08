@@ -387,23 +387,33 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
                 </Popup>
               </Marker>
             )}
-      {polygonData && polygonData.map((poly, i) => {
-          return (
+      {polygonData && (() => {
+          // ordina per area crescente → piccoli sopra
+          const sortedPolys = [...polygonData].sort((a, b) => {
+            const amq = Number.isFinite(a.mq) ? a.mq : Number.MAX_VALUE;
+            const bmq = Number.isFinite(b.mq) ? b.mq : Number.MAX_VALUE;
+            return amq - bmq;
+          });
+
+          return sortedPolys.map((poly, i) => (
             <Polygon
               key={i}
               positions={poly.points}
-              color={poly.color || "#222"}
-              fillColor={poly.color || "#222"}
-              fillOpacity={0.45}
+              color={poly.color}           // usa il colore originale
+              fillColor={poly.color}       // idem
+              fillOpacity={poly.mq > 5000 ? 0.2 : 0.45} // grandi più trasparenti
               weight={2}
+              eventHandlers={{
+                mouseover: (e) => e.target.bringToFront(),
+              }}
             >
               <Tooltip sticky direction="top">
                 <span style={{ fontWeight: 600 }}>{poly.label}</span>
-                {poly.mq ? <><br />{poly.mq} mq</> : null}
+                {Number.isFinite(poly.mq) ? (<><br />{poly.mq} mq</>) : null}
               </Tooltip>
             </Polygon>
-          );
-        })}
+          ));
+        })()}
     </MapContainer>
   );
 }
