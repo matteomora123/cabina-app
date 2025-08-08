@@ -73,31 +73,28 @@ function MapControls({
   const isCabinaMode = idCabina !== "";
 
   const handleSubmit = async () => {
-    setError("");
+      setError("");
 
-    if (isCoordMode && isCabinaMode) {
-      setError("Inserisci solo coordinate o codice cabina, non entrambi.");
-      return;
-    }
-
-    if (isCoordMode) {
-      const latNum = parseFloat(lat);
-      const lngNum = parseFloat(lng);
-
-      if (isNaN(latNum) || isNaN(lngNum)) {
-        setError("Latitudine o longitudine non valida.");
+      if (!lat && !lng && !idCabina) {
+        setError("Inserisci coordinate o codice cabina oppure clicca un marker.");
         return;
       }
-      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
-      setPolygonData(null);
-      return;
-    }
 
-    if (isCabinaMode) {
+      if (lat || lng) {
+        const latNum = parseFloat(lat);
+        const lngNum = parseFloat(lng);
+        if (isNaN(latNum) || isNaN(lngNum)) {
+          setError("Latitudine o longitudine non valida.");
+          return;
+        }
+        setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
+        setPolygonData(null);
+        return;
+      }
+
       try {
         const res = await fetch(`http://localhost:8000/cabina/${idCabina}`);
         const data = await res.json();
-
         if (data.lat && data.lng) {
           setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 18 });
           setLat(data.lat.toString());
@@ -110,11 +107,7 @@ function MapControls({
         console.error("Errore API:", err);
         setError("Errore nella comunicazione con il server.");
       }
-      return;
-    }
-
-    setError("Compila almeno un campo per la ricerca.");
-  };
+    };
 
   return (
     <div className="sidebar">
@@ -349,14 +342,12 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
               position={[cab.lat, cab.lng]}
               icon={blueIcon}
               eventHandlers={{
-                click: () => {
-                  if (!lat && !lng && !idCabina) {
+                  click: () => {
                     setLat(cab.lat.toString());
                     setLng(cab.lng.toString());
                     setIdCabina(cab.chk);
                   }
-                }
-              }}
+                }}
             >
               <Popup>
                 <strong>{cab.denom}</strong><br />
@@ -370,34 +361,32 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
       )}
         {/* Marker verde per nuova coordinata armonizzata */}
         {!hideMarkers && armonizedMarker && (
-          <Marker
-            position={[armonizedMarker.lat, armonizedMarker.lng]}
-            icon={new L.Icon({
-              iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
-              shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
-              iconSize: [25, 41],
-              iconAnchor: [12, 41],
-              popupAnchor: [1, -34],
-              shadowSize: [41, 41],
-            })}
-            eventHandlers={{
-              click: () => {
-                if (!lat && !lng && !idCabina) {
-                  setLat(armonizedMarker.lat.toString());
-                  setLng(armonizedMarker.lng.toString());
-                  setIdCabina(armonizedMarker.chk);
-                }
-              }
-            }}
-          >
-            <Popup>
-              <strong>Nuova posizione armonizzata</strong><br />
-              CHK: {armonizedMarker.chk}<br />
-              Lat: {armonizedMarker.lat.toFixed(6)}<br />
-              Lng: {armonizedMarker.lng.toFixed(6)}
-            </Popup>
-          </Marker>
-        )}
+              <Marker
+                position={[armonizedMarker.lat, armonizedMarker.lng]}
+                icon={new L.Icon({
+                  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
+                  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                  popupAnchor: [1, -34],
+                  shadowSize: [41, 41],
+                })}
+                eventHandlers={{
+                  click: () => {
+                    setLat(armonizedMarker.lat.toString());
+                    setLng(armonizedMarker.lng.toString());
+                    setIdCabina(armonizedMarker.chk);
+                  }
+                }}
+              >
+                <Popup>
+                  <strong>Nuova posizione armonizzata</strong><br />
+                  CHK: {armonizedMarker.chk}<br />
+                  Lat: {armonizedMarker.lat.toFixed(6)}<br />
+                  Lng: {armonizedMarker.lng.toFixed(6)}
+                </Popup>
+              </Marker>
+            )}
       {polygonData && polygonData.map((poly, i) => {
           return (
             <Polygon
@@ -756,6 +745,7 @@ function App() {
           coords={coords}
           polygonData={polygonData}
           cabine={cabine}
+          // autoZoom={autoZoom}
           mapRef={mapRef}
           setCenterCoords={setCenterCoords}
           armonizedMarker={armonizedMarker}
