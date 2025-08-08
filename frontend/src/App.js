@@ -88,7 +88,7 @@ function MapControls({
         setError("Latitudine o longitudine non valida.");
         return;
       }
-      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 17 });
+      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
       setPolygonData(null);
       return;
     }
@@ -99,7 +99,7 @@ function MapControls({
         const data = await res.json();
 
         if (data.lat && data.lng) {
-          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 17 });
+          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 18 });
           setLat(data.lat.toString());
           setLng(data.lng.toString());
           setPolygonData(null);
@@ -317,7 +317,8 @@ function rotatePolygonCoords(points, map, angleDeg) {
 }
 
 
-function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel }) {
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina }) {
+
     console.log("MapView polygonData:", polygonData);
   return (
     <MapContainer
@@ -343,7 +344,20 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
       {!hideMarkers && (
         <MarkerClusterGroup>
           {cabine.map((cab, idx) => (
-            <Marker key={idx} position={[cab.lat, cab.lng]} icon={blueIcon}>
+            <Marker
+              key={idx}
+              position={[cab.lat, cab.lng]}
+              icon={blueIcon}
+              eventHandlers={{
+                click: () => {
+                  if (!lat && !lng && !idCabina) {
+                    setLat(cab.lat.toString());
+                    setLng(cab.lng.toString());
+                    setIdCabina(cab.chk);
+                  }
+                }
+              }}
+            >
               <Popup>
                 <strong>{cab.denom}</strong><br />
                 CHK: {cab.chk}<br />
@@ -366,6 +380,15 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
               popupAnchor: [1, -34],
               shadowSize: [41, 41],
             })}
+            eventHandlers={{
+              click: () => {
+                if (!lat && !lng && !idCabina) {
+                  setLat(armonizedMarker.lat.toString());
+                  setLng(armonizedMarker.lng.toString());
+                  setIdCabina(armonizedMarker.chk);
+                }
+              }
+            }}
           >
             <Popup>
               <strong>Nuova posizione armonizzata</strong><br />
@@ -686,7 +709,7 @@ function App() {
       currentLat = result.new_lat; currentLng = result.new_lng;
       setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
       setCoords([currentLat, currentLng]);
-      if (mapRef.current) { mapRef.current.setView([currentLat, currentLng], 17); }
+      if (mapRef.current) { mapRef.current.setView([currentLat, currentLng], 18); }
 
       if (result.done) break;
       await new Promise(r => setTimeout(r, 200)); // stabilizza render prima del giro successivo
@@ -733,12 +756,17 @@ function App() {
           coords={coords}
           polygonData={polygonData}
           cabine={cabine}
-          // autoZoom={autoZoom}
           mapRef={mapRef}
           setCenterCoords={setCenterCoords}
           armonizedMarker={armonizedMarker}
           hideMarkers={hideMarkers}
           setZoomLevel={setZoomLevel}
+          setLat={setLat}
+          setLng={setLng}
+          setIdCabina={setIdCabina}
+          lat={lat}
+          lng={lng}
+          idCabina={idCabina}
         />
       </div>
 
