@@ -13,6 +13,19 @@ import "leaflet-rotate";
 import { useMapEvents } from "react-leaflet";
 import { convertPolygonData } from './utils/geo.js';
 
+const TIPO_OPTIONS = ["e-distribuzione", "CSAT", "Altri", "Convertito"];
+const tipoFromRow = (row) => {
+  const raw = row?.tipo_cabina;
+  if (raw === null || raw === undefined || raw === "") return "e-distribuzione";
+  return String(raw);
+};
+
+const CLEAN = (v) => (v === null || v === undefined || v === "" ? "[null]" : String(v));
+
+function uniqueSorted(arr) {
+  return Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
+}
+
 // -- ICON
 const blueIcon = new L.Icon({
   iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
@@ -53,12 +66,42 @@ function ZoomTracker({ setZoomLevel }) {
   return null;
 }
 
+function BoundsTracker({ setMapBounds }) {
+  const map = useMap();
+  useEffect(() => {
+    const update = () => setMapBounds(map.getBounds());
+    update(); // iniziale
+    map.on('moveend zoomend', update);
+    return () => {
+      map.off('moveend zoomend', update);
+    };
+  }, [map, setMapBounds]);
+  return null;
+}
+
+
 // -- SIDEBAR CONTROLS
 function MapControls({
   lat, setLat, lng, setLng, idCabina, setIdCabina,
   setCoords, setPolygonData, setCaptureMode, capturedImage, setCapturedImage,
   setArmonizedMarker, analizzaCabina, isAnalisiLoading, centerCoords,
-  captureParams, armonizzaCabinaAuto, mapRef, setPendingFlyTo, setZoomLevel
+  captureParams, armonizzaCabinaAuto, mapRef, setPendingFlyTo, setZoomLevel,
+  // === props filtri ===
+  optionsTipoCabina,
+  optionsAreaRegionale,
+  optionsRegione,
+  optionsProvSuggerite,
+  filtroTipoCabina,
+  setFiltroTipoCabina,
+  filtroArea,
+  setFiltroArea,
+  filtroRegione,
+  setFiltroRegione,
+  filtroProvincia,
+  setFiltroProvincia,
+  soloInVista,
+  setSoloInVista,
+  conteggioFiltrate,
 }) {
   const [error, setError] = useState("");
   function resetAllFieldsIfLocked() {
@@ -109,9 +152,159 @@ function MapControls({
       }
     };
 
+      // PULISCI = azzera TUTTO (tipi, area, regione, provincia) + campi puntuali
+    const handlePulisci = () => {
+      setFiltroTipoCabina(new Set());
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+
+      // pulisco anche i campi puntuali
+      setLat("");
+      setLng("");
+      setIdCabina("");
+    };
+
+    // RESET FILTRI = NON tocca i tipi; azzera solo area/regione/provincia + campi puntuali
+    const handleResetFiltri = () => {
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+
+      // pulisco anche i campi puntuali
+      setLat("");
+      setLng("");
+      setIdCabina("");
+    };
+
+
   return (
     <div className="sidebar">
       <h2>Dashboard</h2>
+
+              {/* === FILTRI MARKER === */}
+        <div style={{margin: '12px 0', padding: 10, border: '1px solid #ddd', borderRadius: 8, background: '#fafafa'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8}}>
+            <strong>Filtri marker</strong>
+            <span style={{fontSize:12, opacity:0.8}}>in vista: {conteggioFiltrate}</span>
+          </div>
+
+          {/* Solo in vista */}
+          <label style={{display:'flex', gap:8, alignItems:'center', marginBottom:10}}>
+            <input
+              type="checkbox"
+              checked={!!soloInVista}
+              onChange={e => setSoloInVista(e.target.checked)}
+            />
+            Mostra solo cabine nell’area visibile
+          </label>
+
+          {/* Tipo cabina (checkbox multiple) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Tipo cabina</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:6}}>
+              {optionsTipoCabina.map(opt => (
+                <label key={opt} style={{display:'flex', alignItems:'center', gap:6}}>
+                  <input
+                    type="checkbox"
+                    checked={filtroTipoCabina.has(opt)}
+                    onChange={(e) => {
+                      const next = new Set([...filtroTipoCabina]);
+                      if (e.target.checked) next.add(opt);
+                      else next.delete(opt);
+                      setFiltroTipoCabina(next);
+                    }}
+                  />
+                  <span>{opt}</span>
+                </label>
+              ))}
+            </div>
+            <div style={{marginTop:6}}>
+              <button
+                type="button"
+                onClick={() => setFiltroTipoCabina(new Set(optionsTipoCabina))}
+                style={{marginRight:8}}
+              >
+                Seleziona tutti
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePulisci}
+              >
+                Pulisci
+              </button>
+            </div>
+        </div>
+
+          {/* Area regionale (select) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Area regionale</div>
+            <select
+              value={filtroArea}
+              onChange={e => {
+                setFiltroArea(e.target.value);
+                // reset dipendenti
+                setFiltroRegione("");
+                setFiltroProvincia("");
+              }}
+              style={{width:'100%'}}
+            >
+              <option value="">(tutte)</option>
+              {optionsAreaRegionale.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Regione (select dipendente da Area) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Regione</div>
+            <select
+              value={filtroRegione}
+              onChange={e => {
+                setFiltroRegione(e.target.value);
+                setFiltroProvincia("");
+              }}
+              style={{width:'100%'}}
+              disabled={(!filtroArea) || optionsRegione.length === 0}
+            >
+              <option value="">(tutte)</option>
+              {optionsRegione.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provincia (input 2 lettere con suggerimenti) */}
+          <div style={{marginBottom: 4}}>
+            <div style={{fontSize:12, marginBottom:6}}>Provincia (2 lettere)</div>
+            <input
+              value={filtroProvincia}
+              onChange={e => setFiltroProvincia(e.target.value.toUpperCase().slice(0, 2))}
+              list="prov-suggestions"
+              placeholder="es. RM"
+              style={{width:'100%'}}
+            />
+            <datalist id="prov-suggestions">
+              {optionsProvSuggerite.map(p => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+              {filtroProvincia.length === 2 && optionsProvSuggerite.length === 0 && (
+              <div style={{ marginTop: 4, fontSize: 12, color: '#b91c1c' }}>
+                Provincia non presente
+              </div>
+            )}
+          </div>
+
+          <div style={{display:'flex', gap:8, marginTop:8}}>
+            <button type="button" onClick={handleResetFiltri}>
+                Reset filtri
+            </button>
+            </div>
+        </div>
+
       <style>{`
           input[disabled] {
             pointer-events: none;
@@ -310,7 +503,7 @@ function rotatePolygonCoords(points, map, angleDeg) {
 }
 
 
-function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina }) {
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina, setMapBounds, filtroArea, fetchSeq}) {
 
     console.log("MapView polygonData:", polygonData);
   return (
@@ -328,6 +521,7 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
     >
        <CenterTracker setCenterCoords={setCenterCoords} />
         <ZoomTracker setZoomLevel={setZoomLevel} />
+        <BoundsTracker setMapBounds={setMapBounds} />
       <TileLayer
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
@@ -335,10 +529,10 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
       />
 
       {!hideMarkers && (
-        <MarkerClusterGroup>
+        <MarkerClusterGroup key={`${filtroArea || 'ALL'}|${fetchSeq}`}>
           {cabine.map((cab, idx) => (
             <Marker
-              key={idx}
+              key={cab.chk || `${cab.lat},${cab.lng}`}
               position={[cab.lat, cab.lng]}
               icon={blueIcon}
               eventHandlers={{
@@ -394,7 +588,6 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
             const bmq = Number.isFinite(b.mq) ? b.mq : Number.MAX_VALUE;
             return amq - bmq;
           });
-
           return sortedPolys.map((poly, i) => (
             <Polygon
               key={i}
@@ -571,6 +764,7 @@ function App() {
   const [isAnalisiLoading, setIsAnalisiLoading] = useState(false);
   const [pendingFlyTo, setPendingFlyTo] = useState(null); // [coords, zoom]
   const mapRef = useRef(null);
+  const fetchSeqRef = useRef(0);
   const [rotation, setRotation] = useState(0);
   useEffect(() => {
       if (mapRef.current) {
@@ -578,6 +772,180 @@ function App() {
       }
   }, [rotation]);
   const [hideMarkers, setHideMarkers] = useState(false);
+  // === FILTRI ===
+  const [mapBounds, setMapBounds] = useState(null);
+  const [soloInVista, setSoloInVista] = useState(true);
+  const [filtroTipoCabina, setFiltroTipoCabina] = useState(new Set(["e-distribuzione"]));
+  const [filtroArea, setFiltroArea] = useState("");
+  const [filtroRegione, setFiltroRegione] = useState("");
+  const [filtroProvincia, setFiltroProvincia] = useState("");
+
+  // Opzioni lato UI prese dal backend in base ai filtri selezionati
+
+    const [optionsTipoCabina] = useState(TIPO_OPTIONS);
+    const [optionsAreaRegionale, setOptionsAreaRegionale] = useState([]);
+    const [optionsRegione, setOptionsRegione] = useState([]);
+    const [optionsProvSuggerite, setOptionsProvSuggerite] = useState([]);
+
+    // 1) Popola Aree in base ai TIPI selezionati
+    // Carica cabine dal backend in base ai filtri (server-side filtering)
+    // CHANGE: fetch cabine con abort, debounce, anti-race e no-cache
+    // Carica SOLO per Area (semplice, niente altri parametri)
+    // Carica cabine in base alla selezione progressiva
+    // Reset gerarchico filtri
+    useEffect(() => {
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+    }, [filtroTipoCabina]);
+
+    useEffect(() => {
+      setFiltroRegione("");
+      setFiltroProvincia("");
+    }, [filtroArea]);
+
+    useEffect(() => {
+      setFiltroProvincia("");
+    }, [filtroRegione]);
+
+
+    // Carica cabine in base alla selezione progressiva (area opzionale)
+    // Carica cabine in base alla selezione progressiva
+    useEffect(() => {
+      const controller = new AbortController();
+      const mySeq = ++fetchSeqRef.current;
+
+      // Nessun tipo selezionato → svuota e stop
+      if (filtroTipoCabina.size === 0) {
+        setCabine([]);
+        return;
+      }
+
+      setCabine([]); // pulizia immediata
+
+      const url = new URL("http://localhost:8000/cabine");
+      [...filtroTipoCabina].forEach(t => url.searchParams.append("tipo", t));
+      if (filtroArea) url.searchParams.set("area_regionale", filtroArea);
+      if (filtroRegione) url.searchParams.set("regione", filtroRegione);
+      if (filtroProvincia && filtroProvincia.trim().length === 2) {
+        url.searchParams.set("provincia", filtroProvincia.trim().toUpperCase());
+      }
+
+      fetch(url.toString(), { signal: controller.signal, cache: "no-store" })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
+        .then(data => {
+          if (mySeq !== fetchSeqRef.current) return;
+          const rows = Array.isArray(data.data) ? data.data : [];
+          const norm = rows.map(c => ({ ...c, lat: +c.lat, lng: +c.lng }))
+                           .filter(c => Number.isFinite(c.lat) && Number.isFinite(c.lng));
+          setCabine(norm);
+        })
+        .catch(err => {
+          if (err.name === "AbortError") return;
+          if (mySeq !== fetchSeqRef.current) return;
+          console.warn("fetch cabine", err);
+          setCabine([]);
+        });
+
+      return () => controller.abort();
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // --- CARICA AREE in base ai TIPI selezionati
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsAreaRegionale([]);
+        setFiltroArea("");
+        return;
+      }
+      const controller = new AbortController();
+      const params = new URLSearchParams();
+      [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+
+      fetch(`http://localhost:8000/filters/area_regionale?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store" // ADD
+        })
+        .then(r => r.json())
+        .then(data => {
+          const opts = data.options || [];
+          setOptionsAreaRegionale(opts);
+          if (filtroArea && !opts.includes(filtroArea)) setFiltroArea("");
+        })
+        .catch(() => {});
+      return () => controller.abort();
+    }, [filtroTipoCabina]);
+
+    // --- CARICA REGIONI in base a TIPI + AREA
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsRegione([]);
+        setFiltroRegione("");
+        return;
+      }
+      const controller = new AbortController();
+      const params = new URLSearchParams();
+      [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+      if (filtroArea) params.set("area_regionale", filtroArea);  // <-- CORRETTO
+
+      fetch(`http://localhost:8000/filters/regione?${params.toString()}`, {
+      signal: controller.signal,
+      cache: "no-store" // ADD
+    })
+        .then(r => r.json())
+        .then(data => {
+          const opts = data.options || [];
+          setOptionsRegione(opts);
+          if (filtroRegione && !opts.includes(filtroRegione)) setFiltroRegione("");
+        })
+        .catch(() => {});
+      return () => controller.abort();
+    }, [filtroTipoCabina, filtroArea]);
+
+    // --- SUGGERIMENTI PROVINCE in base a TIPI + AREA + REGIONE + prefisso
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsProvSuggerite([]);
+        return;
+      }
+      const controller = new AbortController();
+      const t = setTimeout(() => {
+        const params = new URLSearchParams();
+        [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+        if (filtroArea) params.set("area_regionale", filtroArea); // <-- CORRETTO
+        if (filtroRegione) params.set("regione", filtroRegione);
+        if (filtroProvincia) params.set("q", filtroProvincia);
+
+        fetch(`http://localhost:8000/filters/provincia?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store" // ADD
+        })
+          .then(r => r.json())
+          .then(data => setOptionsProvSuggerite(data.options || []))
+          .catch(() => {});
+      }, 200);
+      return () => { controller.abort(); clearTimeout(t); };
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // Svuota i campi puntuali quando cambiano i filtri
+    useEffect(() => {
+      setLat("");
+      setLng("");
+      setIdCabina("");
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // Filtraggio cabine
+    const cabineFiltrate = React.useMemo(() => {
+          if (soloInVista && mapBounds) {
+            return cabine.filter(c => {
+              try { return mapBounds.contains(L.latLng(c.lat, c.lng)); }
+              catch { return true; }
+            });
+          }
+          return cabine;
+        }, [cabine, soloInVista, mapBounds]);
+    const conteggioFiltrate = cabineFiltrate.length;
+
+
   useEffect(() => {
   if (mapRef.current && pendingFlyTo) {
     const { coords, zoom } = pendingFlyTo;
@@ -587,14 +955,7 @@ function App() {
     setPendingFlyTo(null);
   }
 }, [pendingFlyTo]);
-  useEffect(() => {
-    fetch("http://localhost:8000/cabine")
-      .then((res) => res.json())
-      .then((data) => setCabine(data.data))
-      .catch((err) => console.error("Errore nel fetch delle cabine:", err));
-  }, []);
-
-    // Funzione ANALISI
+  // Funzione ANALISI
  async function analizzaCabina() {
   setIsAnalisiLoading(true);
 
@@ -648,7 +1009,7 @@ function App() {
     const map = mapRef.current;
     setPolygonData(converted); // fallback
 
-    console.log("Poligoni convertiti:", converted);
+    console.log("Poligoni convertito:", converted);
 
   } catch (e) {
     console.error("Errore durante l’analisi:", e);
@@ -742,6 +1103,21 @@ function App() {
           isAnalisiLoading={isAnalisiLoading}
           centerCoords={centerCoords}
           captureParams={captureParams}
+          optionsTipoCabina={optionsTipoCabina}
+          optionsAreaRegionale={optionsAreaRegionale}
+          optionsRegione={optionsRegione}
+          optionsProvSuggerite={optionsProvSuggerite}
+          filtroTipoCabina={filtroTipoCabina}
+          setFiltroTipoCabina={setFiltroTipoCabina}
+          filtroArea={filtroArea}
+          setFiltroArea={setFiltroArea}
+          filtroRegione={filtroRegione}
+          setFiltroRegione={setFiltroRegione}
+          filtroProvincia={filtroProvincia}
+          setFiltroProvincia={setFiltroProvincia}
+          soloInVista={soloInVista}
+          setSoloInVista={setSoloInVista}
+          conteggioFiltrate={conteggioFiltrate}
       />
 
       {/* MAPPA CENTRALE */}
@@ -754,7 +1130,6 @@ function App() {
         <MapView
           coords={coords}
           polygonData={polygonData}
-          cabine={cabine}
           // autoZoom={autoZoom}
           mapRef={mapRef}
           setCenterCoords={setCenterCoords}
@@ -766,7 +1141,11 @@ function App() {
           setIdCabina={setIdCabina}
           lat={lat}
           lng={lng}
+          cabine={cabineFiltrate}
           idCabina={idCabina}
+          setMapBounds={setMapBounds}
+          filtroArea={filtroArea}
+          fetchSeq={fetchSeqRef.current}
         />
       </div>
 
