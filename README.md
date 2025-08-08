@@ -1,3 +1,5 @@
+Spiegazione codice di segmentazione https://docs.google.com/document/d/14KnUPLUtPCkNTwt266GcW52OpYVKuX1D/edit?usp=sharing&ouid=102405883886868921769&rtpof=true&sd=true
+
 # Architettura del progetto `cabina-app`
 
 La directory è suddivisa in tre blocchi principali:
