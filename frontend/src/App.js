@@ -88,7 +88,7 @@ function MapControls({
         setError("Latitudine o longitudine non valida.");
         return;
       }
-      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
+      setPendingFlyTo({ coords: [latNum, lngNum], zoom: 17 });
       setPolygonData(null);
       return;
     }
@@ -99,7 +99,7 @@ function MapControls({
         const data = await res.json();
 
         if (data.lat && data.lng) {
-          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 18 });
+          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 17 });
           setLat(data.lat.toString());
           setLng(data.lng.toString());
           setPolygonData(null);
@@ -443,6 +443,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
         zoomRef: zoom,
         centerLat: center[0],
         centerLng: center[1],
+        bearing: mapRef.current?.getBearing?.() ?? 0
       });
     } finally {
       leafletElement.parentElement.style.transform = originalTransform;
@@ -636,76 +637,64 @@ function App() {
 }
 
  async function armonizzaCabinaAuto() {
-      if (!idCabina) {
-        alert("Seleziona prima una cabina");
-        return;
-      }
+  if (!idCabina) { alert("Seleziona prima una cabina"); return; }
 
-      let currentLat = parseFloat(lat);
-      let currentLng = parseFloat(lng);
-      let maxIter = 5;
+  let currentLat = parseFloat(lat);
+  let currentLng = parseFloat(lng);
+  const maxIter = 5;
+  const cropSize = 300;
+  const leafletElement = document.querySelector('.leaflet-container');
 
-      for (let step = 1; step <= maxIter; step++) {
-        // 1. Cattura invisibile dalla mappa attuale
-        const leafletElement = document.querySelector('.leaflet-container');
-        const fullCanvas = await html2canvas(leafletElement, {
-          useCORS: true,
-          backgroundColor: null,
-          allowTaint: true,
-          logging: false,
-          scale: 1,
-        });
+  for (let step = 1; step <= maxIter; step++) {
+    const parent = leafletElement.parentElement;
+    const originalTransform = parent.style.transform;
+    parent.style.transform = "none";
+    try {
+      const fullCanvas = await html2canvas(leafletElement, {
+        useCORS: true,
+        backgroundColor: null,
+        allowTaint: true,
+        logging: false,
+        scale: 1
+      });
+      const rect = leafletElement.getBoundingClientRect();
+      const scaleFactor = fullCanvas.width / rect.width;
+      const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+      const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
 
-        const cropSize = 300;
-        const rect = leafletElement.getBoundingClientRect();
-        const scaleFactor = fullCanvas.width / rect.width;
-        const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
-        const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+      const cropped = document.createElement('canvas');
+      cropped.width = cropSize; cropped.height = cropSize;
+      const ctx = cropped.getContext('2d');
+      ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+      const imageData = cropped.toDataURL();
 
-        const cropped = document.createElement('canvas');
-        cropped.width = cropSize;
-        cropped.height = cropSize;
-        const ctx = cropped.getContext('2d');
-        ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+      const body = {
+        chk: idCabina,
+        zoom: mapRef.current?.getZoom() ?? 18,
+        crop_size: cropSize,
+        image: imageData,
+        bearing: mapRef.current?.getBearing?.() ?? 0
+      };
+      if (step > 1) { body.lat = currentLat; body.lng = currentLng; }
 
-        const imageData = cropped.toDataURL();
+      const resp = await fetch("http://localhost:8000/update_centered_coord", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      const result = await resp.json();
+      if (!resp.ok) { alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto")); return; }
 
-        // 2. Chiamata API per step di ottimizzazione
-        const resp = await fetch(`http://localhost:8000/update_centered_coord`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chk: idCabina,
-            zoom: 18,
-            crop_size: cropSize,
-            image: imageData
-          })
-        });
+      currentLat = result.new_lat; currentLng = result.new_lng;
+      setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
+      setCoords([currentLat, currentLng]);
+      if (mapRef.current) { mapRef.current.setView([currentLat, currentLng], 17); }
 
-        const result = await resp.json();
-        console.log("Step armonizzazione:", result);
-
-        if (!resp.ok) {
-          alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
-          return;
-        }
-
-        currentLat = result.new_lat;
-        currentLng = result.new_lng;
-
-          setArmonizedMarker({
-            lat: currentLat,
-            lng: currentLng,
-            chk: idCabina
-          });
-          setHideMarkers(false); // <- aggiunto
-          setCoords([currentLat, currentLng]); // <- centra la mappa
-          if (mapRef.current) {
-            mapRef.current.setView([currentLat, currentLng], 18);
-          }
-          break;
-        }
+      if (result.done) break;
+      await new Promise(r => setTimeout(r, 200)); // stabilizza render prima del giro successivo
+    } finally {
+      parent.style.transform = originalTransform;
     }
+  }
+}
 
   return (
     <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>

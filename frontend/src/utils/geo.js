@@ -1,5 +1,17 @@
-// geo.js
 import { area as turfArea } from '@turf/turf';
+
+/**
+ * Ruota un punto [x,y] attorno al centro della crop di un certo angolo in gradi.
+ */
+function rotateAroundCenter([x, y], angleDeg, cropSize = 300) {
+  const rad = (angleDeg * Math.PI) / 180;
+  const cx = cropSize / 2, cy = cropSize / 2;
+  const dx = x - cx, dy = y - cy;
+  const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
+  const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
+  return [cx + rx, cy + ry];
+}
+
 /**
  * Converte un punto (px, py) della crop in [lat, lng] usando la proiezione Web Mercator.
  */
@@ -54,29 +66,28 @@ export function convertPolygonData(polygons = [], captureParams = {}) {
   const zoom = parseInt(captureParams.zoom, 10);
   const centerLat = parseFloat(captureParams.centerLat);
   const centerLng = parseFloat(captureParams.centerLng);
+  const bearing = parseFloat(captureParams.bearing ?? 0);
 
   return polygons.map((poly) => {
-    const latLngPoints = (poly.points || []).map(([x, y]) =>
-      pixelToLatLng(x, y, centerLat, centerLng, zoom, cropSize)
-    );
-    // Calcolo area in mq
-    const mq = latLngPoints.length > 2 ? Math.round(calculatePolygonArea(latLngPoints)) : 0;
-    return {
-      ...poly,
-      points: latLngPoints,
-      mq, // aggiungi qui
-    };
+    const latLngPoints = (poly.points || []).map(([x, y]) => {
+      const [ux, uy] = bearing
+        ? rotateAroundCenter([x, y], -bearing, cropSize)
+        : [x, y];
+      return pixelToLatLng(ux, uy, centerLat, centerLng, zoom, cropSize);
+    });
+    const mq =
+      latLngPoints.length > 2
+        ? Math.round(calculatePolygonArea(latLngPoints))
+        : 0;
+    return { ...poly, points: latLngPoints, mq };
   });
 }
+
 /**
  * Calcola l'area (in metri quadrati) di un poligono definito da una lista di punti [lat, lng].
- * @param {Array<Array<number>>} latlngPoints - Array di punti [[lat, lng], ...]
- * @returns {number} Area in metri quadrati (float)
  */
 export function calculatePolygonArea(latlngPoints) {
-  // Turf richiede GeoJSON con coordinate [lng, lat]
   const coords = latlngPoints.map(([lat, lng]) => [lng, lat]);
-  // Chiudi il poligono se non già chiuso
   if (coords.length && (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])) {
     coords.push(coords[0]);
   }

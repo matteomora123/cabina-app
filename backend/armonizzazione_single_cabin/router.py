@@ -1,3 +1,4 @@
+#backend/armonizzazione_single_cabin/router.py
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,7 +36,8 @@ async def update_centered_coord(req: CoordinateOptimizationRequest):
                 crop_size=req.crop_size,
                 image=req.image,
                 lat=lat_db,
-                lng=lng_db
+                lng=lng_db,
+                bearing=getattr(req, "bearing", 0.0)
             )
         )
         ...

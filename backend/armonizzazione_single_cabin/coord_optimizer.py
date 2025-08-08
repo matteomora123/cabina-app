@@ -1,3 +1,4 @@
+#backend/armonizzazione_single_cabin/coord_optimizer.py
 from fastapi import HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -16,6 +17,7 @@ class CoordinateOptimizationRequest(BaseModel):
     zoom: Optional[int] = 18
     crop_size: Optional[int] = 300
     image: Optional[str] = None  # base64 invisibile catturata dal frontend
+    bearing: Optional[float] = 0.0
     lat: Optional[float] = None  # opzionale: lat iniziale
     lng: Optional[float] = None  # opzionale: lng iniziale
 
@@ -75,6 +77,15 @@ def distance_to_crop_center(px, py, crop_size=300):
     cx = crop_size / 2
     cy = crop_size / 2
     return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+
+def rotate_px_about_center(x, y, angle_deg, crop_size=300):
+    cx = crop_size/2; cy = crop_size/2
+    dx = x - cx; dy = y - cy
+    rad = math.radians(angle_deg)
+    rx =  dx*math.cos(rad) - dy*math.sin(rad)
+    ry =  dx*math.sin(rad) + dy*math.cos(rad)
+    return cx+rx, cy+ry
+
 
 # ---- Funzione principale ----
 async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> CoordinateOptimizationResponse:
@@ -152,24 +163,20 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
         poligono_max = shapely_stalli[idx_max]
         print(f"Selezionato poligono più grande, area: {poligono_max.area}")
 
-        # 6. Centroide del poligono più grande
+        # 6. Punto centrale robusto del poligono
         centro = poligono_max.centroid
-        print(f"Centroide pixel coords (crop): x={centro.x}, y={centro.y}")
+        if not poligono_max.contains(centro) or centro.distance(poligono_max.boundary) < 3:
+            centro = poligono_max.representative_point()
+        print(f"Punto scelto (crop px, ruotati): x={centro.x}, y={centro.y}")
 
-        # 7. Coordinate lat/lng dal centroide crop
-        centro_lat, centro_lng = local_crop_pixel_to_latlng(centro.x, centro.y, lat, lng, zoom, crop_size)
-        print(f"Nuove coordinate calcolate (centroide crop): lat={centro_lat}, lng={centro_lng}")
+        # 7. Deruota i pixel della crop prima della conversione
+        ux, uy = rotate_px_about_center(centro.x, centro.y, -(req.bearing or 0.0), crop_size)
 
-        print(f"Center della crop (px): {crop_size / 2}, {crop_size / 2}")
-        print(f"Centroide poligono (px): {centro.x}, {centro.y}")
-        print(f"Delta in pixel: dx={centro.x - crop_size / 2}, dy={centro.y - crop_size / 2}")
-        print(f"Center GPS: {lat}, {lng}")
-        print(f"Centroide GPS: {centro_lat}, {centro_lng}")
-
-        # 8. Calcola distanza dal centro crop (in pixel locali crop)
+        # 8. Converti a lat/lng
+        centro_lat, centro_lng = local_crop_pixel_to_latlng(ux, uy, lat, lng, zoom, crop_size)
         px, py = latlng_to_local_crop_pixel(centro_lat, centro_lng, lat, lng, zoom, crop_size)
         dist = distance_to_crop_center(px, py, crop_size)
-        print(f"Distanza dal centro crop: {dist:.2f} px")
+        print(f"Punto scelto (crop px): x={centro.x}, y={centro.y}")
 
         # 9. Densità pixel (numero di vertici del poligono)
         density_prev = len(stalli_at[idx_max]["points"])
