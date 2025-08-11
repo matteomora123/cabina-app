@@ -1,0 +1,111 @@
+-- ===========================================================
+-- 1. Controllo valori NULL o anomali in colonne chiave
+-- ===========================================================
+SELECT COUNT(*) AS tot_null_geom
+FROM public.cabine
+WHERE geom IS NULL;
+
+SELECT COUNT(*) AS tot_null_geom_centered
+FROM public.cabine
+WHERE geom_centered IS NULL;
+
+SELECT COUNT(*) AS tot_tipo_cabina_null
+FROM public.cabine
+WHERE tipo_cabina IS NULL;
+
+SELECT COUNT(*) AS tot_chk_null
+FROM public.cabine
+WHERE chk IS NULL OR chk = '';
+
+-- Elenco CHK duplicati
+SELECT chk, COUNT(*) AS occorrenze
+FROM public.cabine
+GROUP BY chk
+HAVING COUNT(*) > 1
+ORDER BY occorrenze DESC;
+
+-- ===========================================================
+-- 2. Controllo valori univoci per colonna
+-- ===========================================================
+SELECT DISTINCT tipo_cabina
+FROM public.cabine
+ORDER BY tipo_cabina;
+
+SELECT DISTINCT provincia
+FROM public.cabine
+ORDER BY provincia;
+
+SELECT DISTINCT area_regionale
+FROM public.cabine
+ORDER BY area_regionale;
+
+-- ===========================================================
+-- 3. Pulizia spazi e maiuscole in colonne testo
+-- ===========================================================
+-- (Esempio: provincia)
+BEGIN;
+UPDATE public.cabine
+SET provincia = UPPER(regexp_replace(trim(provincia), '\s+', ' ', 'g'))
+WHERE provincia IS NOT NULL;
+COMMIT;
+
+-- ===========================================================
+-- 4. Coordinate e WKT
+-- ===========================================================
+-- Controlla se WKT è coerente con lat/lon in geom_centered
+SELECT id, ST_AsText(geom_centered) AS wkt,
+       ST_Y(geom_centered) AS lat,
+       ST_X(geom_centered) AS lon
+FROM public.cabine
+LIMIT 20;
+
+-- Cabine fuori dai confini italiani (controllo base bounding box Italia)
+SELECT id, chk, regione, ST_Y(geom_centered) AS lat, ST_X(geom_centered) AS lon
+FROM public.cabine
+WHERE ST_Y(geom_centered) NOT BETWEEN 35 AND 47
+   OR ST_X(geom_centered) NOT BETWEEN 6 AND 19;
+
+-- ===========================================================
+-- 5. Distribuzione geografica
+-- ===========================================================
+-- Conteggio per regione
+SELECT regione, COUNT(*) AS n
+FROM public.cabine
+GROUP BY regione
+ORDER BY n DESC;
+
+-- Conteggio per provincia
+SELECT provincia, COUNT(*) AS n
+FROM public.cabine
+GROUP BY provincia
+ORDER BY n DESC;
+
+-- Conteggio per area_regionale
+SELECT area_regionale, COUNT(*) AS n
+FROM public.cabine
+GROUP BY area_regionale
+ORDER BY n DESC;
+
+-- ===========================================================
+-- 6. Filtri operativi utili
+-- ===========================================================
+-- Cabine candidate a labeling (tipo_cabina NULL e coordinate presenti)
+SELECT *
+FROM public.cabine
+WHERE tipo_cabina IS NULL
+  AND COALESCE(geom_centered, geom) IS NOT NULL;
+
+-- Cabine senza coordinate utilizzabili
+SELECT *
+FROM public.cabine
+WHERE geom_centered IS NULL AND geom IS NULL;
+
+-- ===========================================================
+-- 7. Backup rapido (tabella -> CSV lato server)
+-- ===========================================================
+-- Necessita permessi di scrittura sul server Postgres
+-- Modifica il path in base all'ambiente
+COPY (
+    SELECT * FROM public.cabine
+) TO '/tmp/backup_cabine.csv' WITH CSV HEADER;
+
