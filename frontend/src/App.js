@@ -600,76 +600,33 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
                 </Popup>
               </Marker>
             )}
-      {polygonData && (() => {
-          // --- classi CVAT note
-          const UNDERLAY_LABELS = new Set(["Zona libera/Verde","Strada","Parcheggio"]);
-          const UNDERLAY_COLORS = new Set(["#B2DFDB","#F8BBD0","#B39DDB"]); // verde/strada/parcheggio
-          const OVERLAY_LABELS  = new Set(["Stalli AT","Locale AT/MT","arrivo AT"]); // sempre sopra
-
-          const normalize = v => String(v ?? "").trim();
-          const toHex = v => String(v ?? "").toUpperCase();
-
-          // decide il gruppo usando label -> colore come fallback
-          const paneOf = (p) => {
-            const lbl = normalize(p.label ?? p.tipo);
-            if (OVERLAY_LABELS.has(lbl)) return "overlay";      // etichetta vince
-            if (UNDERLAY_LABELS.has(lbl)) return "underlay";
-            const col = toHex(p.color);
-            if (UNDERLAY_COLORS.has(col)) return "underlay";
-            return "overlay";
-          };
-
-          // split per pane e filtra poligoni non validi
-          const groups = { underlay: [], overlay: [] };
-          for (const p of polygonData) {
-            if (!Array.isArray(p?.points) || p.points.length < 3) continue;
-            groups[paneOf(p)].push(p);
-          }
-
-          // ordina: grandi -> piccoli (così l’ultimo bringToFront sarà il più piccolo)
-          const byAreaBigFirst = (a, b) => {
-            const amq = Number.isFinite(a?.mq) ? a.mq : -1;
-            const bmq = Number.isFinite(b?.mq) ? b.mq : -1;
-            return bmq - amq;
-          };
-          groups.underlay.sort(byAreaBigFirst);
-          groups.overlay.sort(byAreaBigFirst);
-
-          const renderOne = (poly, i) => {
-            const pane = paneOf(poly);
-            const stroke = poly.color || "#FFE082";
-            const mq = Number.isFinite(poly.mq) ? poly.mq : null;
-
-            // forza z-order per overlay: ogni volta che si aggiunge porta davanti,
-            // e dato l'ordine grandi->piccoli l'ultimo (più piccolo) resta on top
-            const handlers = pane === "overlay" ? { add: (e) => e.target.bringToFront() } : undefined;
-
-            return (
-              <Polygon
-                key={`${normalize(poly.label || poly.tipo)}-${i}`}
-                pane={pane}
-                eventHandlers={handlers}
-                positions={poly.points}
-                color={stroke}
-                fillColor={stroke}
-                fillOpacity={mq && mq > 5000 ? 0.2 : 0.45}
-                weight={2}
-              >
-                <Tooltip sticky direction="top">
-                  <span style={{ fontWeight: 600 }}>{poly.label}</span>
-                  {mq ? (<><br />{mq} mq</>) : null}
-                </Tooltip>
-              </Polygon>
-            );
-          };
-
-          // render: prima underlay (sfondi), poi overlay (feature)
-          return [
-            ...groups.underlay.map(renderOne),
-            ...groups.overlay.map(renderOne),
-          ];
+       {polygonData && (() => {
+          // ordina per area crescente → piccoli sopra
+          const sortedPolys = [...polygonData].sort((a, b) => {
+            const amq = Number.isFinite(a.mq) ? a.mq : Number.MAX_VALUE;
+            const bmq = Number.isFinite(b.mq) ? b.mq : Number.MAX_VALUE;
+            return amq - bmq;
+          });
+          return sortedPolys.map((poly, i) => (
+            <Polygon
+              key={i}
+              positions={poly.points}
+              color={poly.color}           // usa il colore originale
+              fillColor={poly.color}       // idem
+              fillOpacity={poly.mq > 5000 ? 0.2 : 0.45} // grandi più trasparenti
+              weight={2}
+              eventHandlers={{
+                mouseover: (e) => e.target.bringToFront(),
+              }}
+            >
+              <Tooltip sticky direction="top">
+                <span style={{ fontWeight: 600 }}>{poly.label}</span>
+                {Number.isFinite(poly.mq) ? (<><br />{poly.mq} mq</>) : null}
+              </Tooltip>
+            </Polygon>
+          ));
         })()}
-    </MapContainer>
+            </MapContainer>
   );
 }
 
