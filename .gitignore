@@ -32,6 +32,12 @@ segformer/images_augmented/
 segformer/masks/
 segformer/masks_augmented/
 
+# === Pre-labeling e features (no immagini, no CSV) ===
+segformer/prepare_features_dataset/images/
+segformer/prepare_features_dataset/*.csv
+segformer/new_images_segV2/
+segformer/new_images_segV2/*.csv
+
 # === Altri ===
 .DS_Store
 Thumbs.db
