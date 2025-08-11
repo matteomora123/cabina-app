@@ -102,8 +102,11 @@ function MapControls({
   soloInVista,
   setSoloInVista,
   conteggioFiltrate,
+  selectedFromMarker,
+  setSelectedFromMarker
 }) {
   const [error, setError] = useState("");
+  const [uiMsg, setUiMsg] = useState("");
   function resetAllFieldsIfLocked() {
   // Se almeno un campo è oscurato/bloccato, svuota tutto
   if (idCabina !== "" || lat !== "" || lng !== "") {
@@ -163,6 +166,8 @@ function MapControls({
       setLat("");
       setLng("");
       setIdCabina("");
+      setSelectedFromMarker(false);
+      setUiMsg("");
     };
 
     // RESET FILTRI = NON tocca i tipi; azzera solo area/regione/provincia + campi puntuali
@@ -175,6 +180,9 @@ function MapControls({
       setLat("");
       setLng("");
       setIdCabina("");
+
+      setSelectedFromMarker(false);
+      setUiMsg("");
     };
 
 
@@ -318,6 +326,7 @@ function MapControls({
                 setLat("");
                 setLng("");
                 setIdCabina("");
+                setSelectedFromMarker(false);
               }
             }}
             style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
@@ -325,7 +334,7 @@ function MapControls({
             <label>Latitudine:</label>
             <input
               value={lat}
-              onChange={e => setLat(e.target.value)}
+              onChange={e => { setLat(e.target.value); setSelectedFromMarker(false); }}
               disabled={idCabina !== ""}
               style={{ width: "95%" }}
             />
@@ -336,6 +345,7 @@ function MapControls({
                 setLat("");
                 setLng("");
                 setIdCabina("");
+                setSelectedFromMarker(false);
               }
             }}
             style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
@@ -343,7 +353,7 @@ function MapControls({
             <label>Longitudine:</label>
             <input
               value={lng}
-              onChange={e => setLng(e.target.value)}
+              onChange={e => { setLng(e.target.value); setSelectedFromMarker(false); }}
               disabled={idCabina !== ""}
               style={{ width: "95%" }}
             />
@@ -354,6 +364,7 @@ function MapControls({
                 setLat("");
                 setLng("");
                 setIdCabina("");
+                setSelectedFromMarker(false);
               }
             }}
             style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
@@ -361,7 +372,7 @@ function MapControls({
             <label>Codice cabina:</label>
             <input
               value={idCabina}
-              onChange={e => setIdCabina(e.target.value)}
+              onChange={e => { setIdCabina(e.target.value); setSelectedFromMarker(false); }}
               disabled={lat !== "" || lng !== ""}
               style={{ width: "95%" }}
             />
@@ -373,45 +384,43 @@ function MapControls({
       {error && <div style={{ color: "red", marginTop: "10px" }}>{error}</div>}
       <hr />
       <button
-      onClick={async () => {
-        // Se almeno un campo compilato, vai diretto
-        if (lat !== "" || lng !== "" || idCabina !== "") {
-          setCaptureMode(true);
-          return;
-        }
-        // Nessun campo compilato: trova cabina vicino al centro
-        try {
-          const res = await fetch(`http://localhost:8000/cabina_near?lat=${centerCoords[0]}&lng=${centerCoords[1]}`);
-          const data = await res.json();
-          if (!data.lat || !data.lng || !data.chk) throw new Error("Nessuna cabina trovata vicino al centro mappa");
-          setIdCabina(data.chk);
-          setLat(data.lat.toString());
-          setLng(data.lng.toString());
-          setCaptureMode(true);
-        } catch (e) {
-          alert("Cabina non trovata vicino al centro");
-        }
-      }}
-      style={{ marginTop: '10px', width: '100%' }}
-    >
-      📸 Scatta Foto
-    </button>
-
-    <button
-      onClick={armonizzaCabinaAuto}
-      style={{
-        marginTop: '10px',
-        width: '100%',
-        background: '#10b981',
-        color: '#fff',
-        fontWeight: 'bold',
-        border: 'none',
-        borderRadius: 5,
-        padding: 8
-      }}
-    >
-      📍 Armonizza Cabina
-    </button>
+          onClick={() => {
+            if (!selectedFromMarker) { setUiMsg("Selezionare una cabina"); return; }
+            setUiMsg("");
+            setCaptureMode(true);
+          }}
+          disabled={!selectedFromMarker}
+          style={{ marginTop: '10px', width: '100%', opacity: selectedFromMarker ? 1 : 0.5, cursor: selectedFromMarker ? 'pointer' : 'not-allowed' }}
+        >
+          📸 Scatta Foto
+      </button>
+        <button
+              onClick={() => {
+                if (!selectedFromMarker) { setUiMsg("Selezionare una cabina"); return; }
+                setUiMsg("");
+                armonizzaCabinaAuto();
+              }}
+              disabled={!selectedFromMarker}
+              style={{
+                marginTop: '10px',
+                width: '100%',
+                background: '#10b981',
+                color: '#fff',
+                fontWeight: 'bold',
+                border: 'none',
+                borderRadius: 5,
+                padding: 8,
+                opacity: selectedFromMarker ? 1 : 0.5,
+                cursor: selectedFromMarker ? 'pointer' : 'not-allowed'
+              }}
+            >
+              📍 Armonizza Cabina
+        </button>
+        {!capturedImage && uiMsg && (
+          <div style={{ color: '#b91c1c', marginTop: 8 }}>
+            {uiMsg}
+          </div>
+        )}
 
       {capturedImage && (
           <div style={{
@@ -471,6 +480,8 @@ function MapControls({
           setLng("");
           setIdCabina("");
           setCapturedImage(null);
+          setSelectedFromMarker(false);
+          setUiMsg("");
         }}
       >
         ❌ Annulla analisi Immagine
@@ -503,7 +514,7 @@ function rotatePolygonCoords(points, map, angleDeg) {
 }
 
 
-function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina, setMapBounds, filtroArea, fetchSeq}) {
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina, setMapBounds, filtroArea, fetchSeq, setSelectedFromMarker }) {
 
     console.log("MapView polygonData:", polygonData);
   return (
@@ -540,6 +551,7 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
                     setLat(cab.lat.toString());
                     setLng(cab.lng.toString());
                     setIdCabina(cab.chk);
+                    setSelectedFromMarker(true);
                   }
                 }}
             >
@@ -570,6 +582,7 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
                     setLat(armonizedMarker.lat.toString());
                     setLng(armonizedMarker.lng.toString());
                     setIdCabina(armonizedMarker.chk);
+                    setSelectedFromMarker(true);
                   }
                 }}
               >
@@ -748,6 +761,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
 
 function App() {
   // --- TUTTI GLI STATE DEI CAMPI IN APP
+  const [selectedFromMarker, setSelectedFromMarker] = useState(false);
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [idCabina, setIdCabina] = useState("");
@@ -931,6 +945,7 @@ function App() {
       setLat("");
       setLng("");
       setIdCabina("");
+      setSelectedFromMarker(false);
     }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
 
     // Filtraggio cabine
@@ -1118,6 +1133,8 @@ function App() {
           soloInVista={soloInVista}
           setSoloInVista={setSoloInVista}
           conteggioFiltrate={conteggioFiltrate}
+          selectedFromMarker={selectedFromMarker}
+          setSelectedFromMarker={setSelectedFromMarker}
       />
 
       {/* MAPPA CENTRALE */}
@@ -1146,6 +1163,7 @@ function App() {
           setMapBounds={setMapBounds}
           filtroArea={filtroArea}
           fetchSeq={fetchSeqRef.current}
+          setSelectedFromMarker={setSelectedFromMarker}
         />
       </div>
 
