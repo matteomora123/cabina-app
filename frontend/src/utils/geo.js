@@ -25,7 +25,7 @@ export function pixelToLatLng(
 ) {
   centerLat = parseFloat(centerLat);
   centerLng = parseFloat(centerLng);
-  zoom = parseInt(zoom);
+  zoom = parseFloat(zoom);
   cropSize = parseInt(cropSize);
 
   const tileSize = 256;
@@ -63,7 +63,7 @@ export function pixelToLatLng(
  */
 export function convertPolygonData(polygons = [], captureParams = {}) {
   const cropSize = parseInt(captureParams.crop_width ?? 300, 10);
-  const zoom = parseInt(captureParams.zoom, 10);
+  const zoom = parseFloat(captureParams.zoom);
   const centerLat = parseFloat(captureParams.centerLat);
   const centerLng = parseFloat(captureParams.centerLng);
   const bearing = parseFloat(captureParams.bearing ?? 0);

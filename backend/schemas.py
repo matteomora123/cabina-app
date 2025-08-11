@@ -20,7 +20,7 @@ class AIRequest(BaseModel):
     lng: float
     crop_width: Optional[int] = None
     crop_height: Optional[int] = None
-    zoom: Optional[int] = None
+    zoom: Optional[float] = None
 
 
 class AIResponse(BaseModel):

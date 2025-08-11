@@ -14,7 +14,7 @@ MIN_DENSITY_IMPROVEMENT = 10
 # ---- Modelli dati
 class CoordinateOptimizationRequest(BaseModel):
     chk: str
-    zoom: Optional[int] = 18
+    zoom: Optional[float] = 18.0
     crop_size: Optional[int] = 300
     image: Optional[str] = None  # base64 invisibile catturata dal frontend
     bearing: Optional[float] = 0.0
