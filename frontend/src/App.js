@@ -2,6 +2,8 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { MapContainer, TileLayer, useMap, Polygon, Tooltip, Marker, Popup, Pane } from "react-leaflet";
+import BatchConsole from "./batch/BatchConsole";
+import { useBatchRunner } from "./batch/useBatchRunner";
 import "leaflet/dist/leaflet.css";
 import "./App.css";
 import MarkerClusterGroup from 'react-leaflet-markercluster';
@@ -12,6 +14,7 @@ import L from "leaflet";
 import "leaflet-rotate";
 import { useMapEvents } from "react-leaflet";
 import { convertPolygonData } from './utils/geo.js';
+const DRAW_POLYGONS_DURING_BATCH = true; // <--- toggle globale
 
 const TIPO_OPTIONS = ["e-distribuzione", "CSAT", "Altri", "Convertito"];
 const tipoFromRow = (row) => {
@@ -21,6 +24,47 @@ const tipoFromRow = (row) => {
 };
 
 const CLEAN = (v) => (v === null || v === undefined || v === "" ? "[null]" : String(v));
+
+// --- HELPERS PER CAPTURE ----------------------------------------------------
+async function waitForMapToSettle(map) {
+  if (!map) return;
+
+  // aspetta fine animazioni pan/zoom
+  await new Promise((res) => {
+    const idle = !map._animatingZoom && !map._panAnim;
+    if (idle) return res();
+    const once = () => { map.off('moveend', once); map.off('zoomend', once); res(); };
+    map.on('moveend', once);
+    map.on('zoomend', once);
+  });
+
+  // aspetta che i TileLayer abbiano caricato le tile correnti
+  const layers = [];
+  map.eachLayer((l) => { if (l instanceof L.TileLayer) layers.push(l); });
+  await Promise.all(
+    layers.map((l) => new Promise((res) => {
+      // se non sta caricando, via subito
+      if (!l._loading) return res();
+      const onLoad = () => { l.off('load', onLoad); res(); };
+      l.on('load', onLoad);
+    }))
+  );
+
+  // due frame per sicurezza (paint completo)
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+function toggleCaptureUiHidden(hide) {
+  document.querySelectorAll('.capture-hide').forEach((el) => {
+    if (hide) {
+      el.setAttribute('data-prev-visibility', el.style.visibility || '');
+      el.style.visibility = 'hidden';
+    } else {
+      el.style.visibility = el.getAttribute('data-prev-visibility') || '';
+      el.removeAttribute('data-prev-visibility');
+    }
+  });
+}
 
 function uniqueSorted(arr) {
   return Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
@@ -87,24 +131,13 @@ function MapControls({
   setCoords, setPolygonData, setCaptureMode, capturedImage, setCapturedImage,
   setArmonizedMarker, analizzaCabina, isAnalisiLoading, centerCoords,
   captureParams, armonizzaCabinaAuto, mapRef, setPendingFlyTo, setZoomLevel,
-  // === props filtri ===
-  optionsTipoCabina,
-  optionsAreaRegionale,
-  optionsRegione,
-  optionsProvSuggerite,
-  filtroTipoCabina,
-  setFiltroTipoCabina,
-  filtroArea,
-  setFiltroArea,
-  filtroRegione,
-  setFiltroRegione,
-  filtroProvincia,
-  setFiltroProvincia,
-  soloInVista,
-  setSoloInVista,
-  conteggioFiltrate,
-  selectedFromMarker,
-  setSelectedFromMarker
+  // filtri
+  optionsTipoCabina, optionsAreaRegionale, optionsRegione, optionsProvSuggerite,
+  filtroTipoCabina, setFiltroTipoCabina, filtroArea, setFiltroArea,
+  filtroRegione, setFiltroRegione, filtroProvincia, setFiltroProvincia,
+  soloInVista, setSoloInVista, conteggioFiltrate,
+  selectedFromMarker, setSelectedFromMarker,
+  runBatchSelection,                                    // <--- nuovo
 }) {
   const [error, setError] = useState("");
   const [uiMsg, setUiMsg] = useState("");
@@ -381,6 +414,38 @@ function MapControls({
         </div>
 
         <button onClick={handleSubmit} style={{ width: '100%', marginBottom: 12 }}>Vai</button>
+        {/* === Estrazione aggregata === */}
+        <div style={{margin:'12px 0', padding:10, border:'1px solid #ddd', borderRadius:8, background:'#fafafa'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <strong>Estrazione aggregata</strong>
+            <span style={{fontSize:12, opacity:0.8}}>in vista: {conteggioFiltrate}</span>
+          </div>
+
+          <button
+            onClick={() => {
+              if (!conteggioFiltrate) return;
+              const ok = window.confirm(
+                `Confermi l’estrazione per la selezione aggregata corrente?\nCabine in vista: ${conteggioFiltrate}.`
+              );
+              if (!ok) return;
+              runBatchSelection();
+            }}
+            disabled={!conteggioFiltrate}
+            style={{
+              width:'100%',
+              background:'#111827', color:'#fff',
+              border:'none', borderRadius:6, padding:8,
+              cursor: conteggioFiltrate ? 'pointer' : 'not-allowed',
+              opacity: conteggioFiltrate ? 1 : 0.5
+            }}
+          >
+            Analizza selezione (batch)
+          </button>
+
+          <div style={{marginTop:6, fontSize:12, color:'#6b7280'}}>
+            Avvia la segmentazione su tutte le cabine attualmente selezionate e genera l’Excel con le aree.
+          </div>
+        </div>
 
       {error && <div style={{ color: "red", marginTop: "10px" }}>{error}</div>}
       <hr />
@@ -541,6 +606,7 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
         <BoundsTracker setMapBounds={setMapBounds} />
       <TileLayer
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        crossOrigin="anonymous"
         attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
         maxZoom={22}
       />
@@ -634,57 +700,62 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
   const overlayRef = useRef(null);
 
   const handleShot = async () => {
-    if (!overlayRef.current) return;
-    const leafletElement = document.querySelector('.leaflet-container');
+  if (!overlayRef.current) return;
+  const leafletElement = document.querySelector('.leaflet-container');
 
-    overlayRef.current.style.display = 'none';
-    setHideMarkers(true);
+  overlayRef.current.style.display = 'none';
+  setHideMarkers(true);
+  toggleCaptureUiHidden(true);         // <--- nascondi overlay esterni
 
-    const originalTransform = leafletElement.parentElement.style.transform;
-    leafletElement.parentElement.style.transform = "none";
+  const originalTransform = leafletElement.parentElement.style.transform;
+  leafletElement.parentElement.style.transform = "none";
 
-    await new Promise(r => setTimeout(r, 200));
+  // lascia tempo al re-render e aspetta davvero la mappa
+  await new Promise(r => requestAnimationFrame(r));
+  await waitForMapToSettle(mapRef.current);
 
-    try {
-      const fullCanvas = await html2canvas(leafletElement, {
-        useCORS: true,
-        backgroundColor: null,
-        allowTaint: true,
-        logging: false,
-        scale: 1,
-      });
+  try {
+    const fullCanvas = await html2canvas(leafletElement, {
+      useCORS: true,
+      backgroundColor: null,
+      allowTaint: true,
+      logging: false,
+      scale: 1,
+    });
 
-      const cropSize = 500;
-      const rect = leafletElement.getBoundingClientRect();
-      const scaleFactor = fullCanvas.width / rect.width;
-      const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
-      const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+    const cropSize = 500;
+    const rect = leafletElement.getBoundingClientRect();
+    const scaleFactor = fullCanvas.width / rect.width;
+    const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+    const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
 
-      const cropped = document.createElement('canvas');
-      cropped.width = cropSize;
-      cropped.height = cropSize;
-      const ctx = cropped.getContext('2d');
-      ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+    const cropped = document.createElement('canvas');
+    cropped.width = cropSize;
+    cropped.height = cropSize;
+    const ctx = cropped.getContext('2d');
+    ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
 
-      const dataUrl = cropped.toDataURL();
-      const zoom = mapRef.current?.getZoom() ?? 19;
-      const center = centerCoords || [0, 0];
+    const dataUrl = cropped.toDataURL();
+    const zoom = mapRef.current?.getZoom() ?? 19;
+    const center = centerCoords || [0, 0];
 
-      onConfirm(dataUrl, {
-        crop_width: cropSize,
-        crop_height: cropSize,
-        zoom,
-        zoomRef: zoom,
-        centerLat: center[0],
-        centerLng: center[1],
-        bearing: mapRef.current?.getBearing?.() ?? 0
-      });
-    } finally {
-      leafletElement.parentElement.style.transform = originalTransform;
-      if (overlayRef.current) overlayRef.current.style.display = 'block';
-      setHideMarkers(false);
-    }
-  };
+    onConfirm(dataUrl, {
+      crop_width: cropSize,
+      crop_height: cropSize,
+      zoom,
+      zoomRef: zoom,
+      centerLat: center[0],
+      centerLng: center[1],
+      bearing: mapRef.current?.getBearing?.() ?? 0
+    });
+  } finally {
+    leafletElement.parentElement.style.transform = originalTransform;
+    toggleCaptureUiHidden(false);      // <--- ripristina overlay
+    if (overlayRef.current) overlayRef.current.style.display = 'block';
+    setHideMarkers(false);
+  }
+};
+
 
   return (
     <div
@@ -786,12 +857,28 @@ function App() {
   const mapRef = useRef(null);
   const fetchSeqRef = useRef(0);
   const [rotation, setRotation] = useState(0);
+  const [hideMarkers, setHideMarkers] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState([]);
+  const [consoleProgress, setConsoleProgress] = useState(0);
+  const [consoleStatus, setConsoleStatus] = useState("");
+  const batch = useBatchRunner({
+      mapRef,
+      setCoords,
+      setHideMarkers,
+      setArmonizedMarker,
+      getCenterCoords: () => centerCoords,
+      setPolygonData,                               // <--- nuovo
+      drawPolygons: DRAW_POLYGONS_DURING_BATCH,     // <--- nuovo
+    });
+
+
   useEffect(() => {
       if (mapRef.current) {
           mapRef.current.setBearing(rotation);
       }
   }, [rotation]);
-  const [hideMarkers, setHideMarkers] = useState(false);
+
   // === FILTRI ===
   const [mapBounds, setMapBounds] = useState(null);
   const [soloInVista, setSoloInVista] = useState(true);
@@ -966,6 +1053,16 @@ function App() {
         }, [cabine, soloInVista, mapBounds]);
     const conteggioFiltrate = cabineFiltrate.length;
 
+    // Avvia il batch sulla selezione corrente (cabineFiltrate) aprendo la console
+    const runBatchSelection = React.useCallback(() => {
+      setConsoleOpen(true);
+      batch.runBatch(cabineFiltrate, {
+        setLogs: setConsoleLogs,
+        setProgress: setConsoleProgress,
+        setStatus: setConsoleStatus,
+        setOpen: setConsoleOpen
+      });
+    }, [batch, cabineFiltrate, setConsoleOpen, setConsoleLogs, setConsoleProgress, setConsoleStatus]);
 
   useEffect(() => {
   if (mapRef.current && pendingFlyTo) {
@@ -987,8 +1084,8 @@ function App() {
   }
 
   try {
-    const reqLat = centerCoords[0];
-    const reqLng = centerCoords[1];
+    const reqLat = parseFloat(centerCoords[0]);
+    const reqLng = parseFloat(centerCoords[1]);
 
     // Sposta la mappa e abilita lo zoom
     setCoords([reqLat, reqLng]);
@@ -1049,11 +1146,19 @@ function App() {
   const cropSize = 500;
   const leafletElement = document.querySelector('.leaflet-container');
 
+  // nascondi tutto fin da subito
+  setHideMarkers(true);
+  toggleCaptureUiHidden(true);
+
   for (let step = 1; step <= maxIter; step++) {
     const parent = leafletElement.parentElement;
     const originalTransform = parent.style.transform;
     parent.style.transform = "none";
     try {
+      // assicurati che lo stato UI sia dipinto e la mappa sia a posto
+      await new Promise(r => requestAnimationFrame(r));
+      await waitForMapToSettle(mapRef.current);
+
       const fullCanvas = await html2canvas(leafletElement, {
         useCORS: true,
         backgroundColor: null,
@@ -1061,6 +1166,7 @@ function App() {
         logging: false,
         scale: 1
       });
+
       const rect = leafletElement.getBoundingClientRect();
       const scaleFactor = fullCanvas.width / rect.width;
       const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
@@ -1090,15 +1196,22 @@ function App() {
       currentLat = result.new_lat; currentLng = result.new_lng;
       setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
       setCoords([currentLat, currentLng]);
-      if (mapRef.current) { mapRef.current.setView([currentLat, currentLng], 18); }
+      if (mapRef.current) mapRef.current.setView([currentLat, currentLng], 18);
 
       if (result.done) break;
-      await new Promise(r => setTimeout(r, 200)); // stabilizza render prima del giro successivo
+
+      // piccolo respiro per il prossimo giro
+      await new Promise(r => setTimeout(r, 200));
     } finally {
       parent.style.transform = originalTransform;
     }
   }
+
+  // ripristina UI
+  toggleCaptureUiHidden(false);
+  setHideMarkers(false);
 }
+
 
   return (
     <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -1141,6 +1254,7 @@ function App() {
           conteggioFiltrate={conteggioFiltrate}
           selectedFromMarker={selectedFromMarker}
           setSelectedFromMarker={setSelectedFromMarker}
+          runBatchSelection={runBatchSelection}
       />
 
       {/* MAPPA CENTRALE */}
@@ -1174,7 +1288,7 @@ function App() {
       </div>
 
       {/* CROCE ROSSA */}
-      <div style={{
+      <div className="capture-hide" style={{
         position: 'absolute',
         top: '50%',
         left: '50%',
@@ -1191,7 +1305,7 @@ function App() {
         }} />
       </div>
         {/* ZOOM LEVEL IN ALTO A SINISTRA */}
-        <div style={{
+        <div className="capture-hide" style={{
           position: 'absolute',
           top: 10,
           left: 350,
@@ -1205,7 +1319,7 @@ function App() {
           <strong>Zoom:</strong> {zoomLevel}
         </div>
       {/* INFO LAT LNG */}
-      <div style={{
+      <div className="capture-hide" style={{
         position: 'absolute',
         top: 10,
         right: 10,
@@ -1218,14 +1332,14 @@ function App() {
       </div>
 
       {/* ROTAZIONE */}
-      <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 1000 }}>
+      <div className="capture-hide" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 1000 }}>
          <button onClick={() => setRotation(r => r - 5)}>↺ Ruota -5°</button>
          <button onClick={() => setRotation(r => r + 5)}>↻ Ruota +5°</button>
          <button onClick={() => setRotation(0)}>⟳ Reset</button>
       </div>
 
       {/* BUSSOLA */}
-      <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000 }}>
+      <div className="capture-hide" style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000 }}>
         <img
           src="/compass.png"
           alt="Bussola"
@@ -1247,7 +1361,13 @@ function App() {
             setHideMarkers={setHideMarkers}
           />
         )}
-
+        <BatchConsole
+          open={consoleOpen}
+          onClose={() => setConsoleOpen(false)}
+          progress={consoleProgress}
+          status={consoleStatus}
+          logs={consoleLogs}
+        />
     </div>
   );
 }
