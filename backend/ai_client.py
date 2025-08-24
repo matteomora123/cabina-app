@@ -1,4 +1,4 @@
-# ai_client.py
+# back end/ ai_client.py
 import httpx
 from schemas import AIRequest
 

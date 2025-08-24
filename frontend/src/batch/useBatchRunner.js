@@ -1,329 +1,162 @@
-// batch/useBatchRunner.js
-import { useRef, useCallback } from "react";
+// src/batch/useBatchRunner.js
 import html2canvas from "html2canvas";
-import L from "leaflet";
+import * as XLSX from "xlsx";
+import { BATCH_SETTINGS } from "./config";
 import { convertPolygonData } from "../utils/geo";
 
-// ---------- RENDER HELPERS ----------
-const raf2 = () =>
-  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+export function useBatchRunner({ mapRef, setCoords, setHideMarkers, setArmonizedMarker, getCenterCoords }) {
+  const logBuffer = [];
+  const pushLog = (setLogs, msg, level='info') => {
+    const item = { ts: Date.now(), msg, level };
+    logBuffer.push(item);
+    setLogs(prev => [...prev, item]);
+  };
 
-async function waitForMapToSettle(map) {
-  if (!map) return;
+  async function armonizzaSingola({ chk, lat, lng }, setLogs, settings) {
+    let currentLat = +lat, currentLng = +lng;
+    const crop = settings.cropSize;
+    const map = mapRef.current;
+    const leafletEl = document.querySelector('.leaflet-container');
+    for (let step=1; step<=settings.maxIter; step++) {
+      const parent = leafletEl.parentElement;
+      const originalTransform = parent.style.transform;
+      parent.style.transform = "none";
+      try {
+        const rect = leafletEl.getBoundingClientRect();
+        const full = await html2canvas(leafletEl, {
+          useCORS:true, backgroundColor:null, allowTaint:true, logging:false, scale: settings.html2canvasScale
+        });
+        const scale = full.width / rect.width;
+        const cx = (rect.width/2 - crop/2) * scale;
+        const cy = (rect.height/2 - crop/2) * scale;
+        const canvas = document.createElement('canvas');
+        canvas.width = crop; canvas.height = crop;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(full, cx, cy, crop*scale, crop*scale, 0, 0, crop, crop);
+        const imageData = canvas.toDataURL();
 
-  // fine animazioni
-  await new Promise((res) => {
-    const idle = !map._animatingZoom && !map._panAnim;
-    if (idle) return res();
-    const once = () => {
-      map.off("moveend", once);
-      map.off("zoomend", once);
-      res();
-    };
-    map.on("moveend", once);
-    map.on("zoomend", once);
-  });
+        const body = {
+          chk, zoom: map?.getZoom() ?? settings.targetZoom,
+          crop_size: crop, image: imageData,
+          bearing: map?.getBearing?.() ?? 0,
+          ...(step>1 ? { lat: currentLat, lng: currentLng } : {})
+        };
 
-  // attesa tile
-  const tiles = [];
-  map.eachLayer((l) => l instanceof L.TileLayer && tiles.push(l));
-  await Promise.all(
-    tiles.map((l) =>
-      l && l._loading
-        ? new Promise((r) => {
-            const onLoad = () => {
-              l.off("load", onLoad);
-              r();
-            };
-            l.on("load", onLoad);
-          })
-        : Promise.resolve()
-    )
-  );
+        const resp = await fetch("http://localhost:8000/update_centered_coord", {
+          method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body)
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result?.detail || "errore armonizzazione");
 
-  await raf2();
-}
-
-function hideCaptureUi(hide) {
-  document.querySelectorAll(".capture-hide").forEach((el) => {
-    if (hide) {
-      el.setAttribute("data-prev-visibility", el.style.visibility || "");
-      el.style.visibility = "hidden";
-    } else {
-      el.style.visibility = el.getAttribute("data-prev-visibility") || "";
-      el.removeAttribute("data-prev-visibility");
-    }
-  });
-}
-
-async function captureCenteredSquare(cropSize) {
-  const leafletEl = document.querySelector(".leaflet-container");
-  const fullCanvas = await html2canvas(leafletEl, {
-    useCORS: true,
-    backgroundColor: null,
-    allowTaint: true,
-    logging: false,
-    scale: 1,
-  });
-  const rect = leafletEl.getBoundingClientRect();
-  const k = fullCanvas.width / rect.width;
-  const cx = (rect.width / 2 - cropSize / 2) * k;
-  const cy = (rect.height / 2 - cropSize / 2) * k;
-
-  const cropped = document.createElement("canvas");
-  cropped.width = cropSize;
-  cropped.height = cropSize;
-  const ctx = cropped.getContext("2d");
-  ctx.drawImage(
-    fullCanvas,
-    cx,
-    cy,
-    cropSize * k,
-    cropSize * k,
-    0,
-    0,
-    cropSize,
-    cropSize
-  );
-  return cropped.toDataURL();
-}
-
-// attende che i path SVG dei poligoni compaiano davvero
-async function waitForPolygonsDrawn(map) {
-  if (!map) return;
-  const pane = map.getPanes()?.overlayPane;
-  if (!pane) return;
-  const hasPaths = () =>
-    pane.querySelectorAll("path.leaflet-interactive").length > 0;
-
-  if (hasPaths()) {
-    await raf2();
-    return;
-  }
-  await new Promise((resolve) => {
-    const obs = new MutationObserver(() => {
-      if (hasPaths()) {
-        obs.disconnect();
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
+        currentLat = result.new_lat; currentLng = result.new_lng;
+        setArmonizedMarker({ lat: currentLat, lng: currentLng, chk });
+        setCoords([currentLat, currentLng]);
+        map?.setView([currentLat, currentLng], settings.targetZoom);
+        pushLog(setLogs, `→ iter ${step}: ${currentLat.toFixed(6)}, ${currentLng.toFixed(6)}`);
+        if (result.done) break;
+        await new Promise(r => setTimeout(r, settings.iterDelayMs));
+      } finally {
+        parent.style.transform = originalTransform;
       }
-    });
-    obs.observe(pane, { childList: true, subtree: true });
-  });
-}
-
-// watchdog di rete per non rimanere inchiodati
-async function fetchWithWatchdog(url, options = {}, ms = 60000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort("watchdog-timeout"), ms);
-  try {
-    return await fetch(url, { ...options, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
+    }
+    return { lat: currentLat, lng: currentLng };
   }
-}
 
-// ---------- HOOK ----------
-export function useBatchRunner({
-  mapRef,
-  setCoords,
-  setHideMarkers,
-  setArmonizedMarker,
-  getCenterCoords,
-  setPolygonData,
-  drawPolygons, // bool
-}) {
-  const runningRef = useRef(false);
+  async function scatta(map, settings) {
+    const leafletEl = document.querySelector('.leaflet-container');
+    const parent = leafletEl.parentElement;
+    const originalTransform = parent.style.transform;
+    parent.style.transform = "none";
+    setHideMarkers(true);
+    await new Promise(r => setTimeout(r, 120));
+    try {
+      const rect = leafletEl.getBoundingClientRect();
+      const full = await html2canvas(leafletEl, {
+        useCORS:true, backgroundColor:null, allowTaint:true, logging:false, scale: settings.html2canvasScale
+      });
+      const scale = full.width / rect.width;
+      const crop = settings.cropSize;
+      const cx = (rect.width/2 - crop/2) * scale;
+      const cy = (rect.height/2 - crop/2) * scale;
+      const canvas = document.createElement('canvas');
+      canvas.width = crop; canvas.height = crop;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(full, cx, cy, crop*scale, crop*scale, 0, 0, crop, crop);
+      const dataUrl = canvas.toDataURL();
+      return { dataUrl, crop, zoom: map?.getZoom() ?? settings.targetZoom, bearing: map?.getBearing?.() ?? 0 };
+    } finally {
+      parent.style.transform = originalTransform;
+      setHideMarkers(false);
+    }
+  }
 
-  const runBatch = useCallback(
-    async (cabine, ui) => {
-      if (runningRef.current) return;
-      runningRef.current = true;
+  async function segmenta({ image, center, crop, zoom }, setLogs) {
+    const res = await fetch('http://localhost:8000/segmenta', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        image, lat:center[0], lng:center[1],
+        crop_width: crop, crop_height: crop, zoom
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.poligoni) throw new Error(data?.detail || "segmentazione fallita");
+    return data.poligoni;
+  }
+
+  function toXlsx(rows) {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "aree_per_chk");
+    XLSX.writeFile(wb, `aree_cabine_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  async function runBatch(cabine, ui) {
+    const settings = { ...BATCH_SETTINGS };
+    const map = mapRef.current;
+    const total = cabine.length;
+    ui.setLogs([]); ui.setProgress(0); ui.setStatus(`Avvio batch su ${total} cabine…`); ui.setOpen(true);
+
+    const outRows = [];
+    for (let i=0; i<total; i++) {
+      const c = cabine[i];
+      const label = `${c.chk || `(${c.lat.toFixed(6)},${c.lng.toFixed(6)})`}`;
+      ui.setStatus(`Armonizzazione cabina ${i+1} di ${total} — ${label}`);
+      ui.setProgress(i/total);
+      pushLog(ui.setLogs, `Cabina ${i+1}/${total} [${label}]`);
 
       try {
-        ui.setOpen(true);
-        ui.setLogs([]);
-        ui.setStatus("Preparazione…");
-        ui.setProgress(0);
+        map?.setView([+c.lat, +c.lng], settings.targetZoom, { animate:true });
+        await new Promise(r => setTimeout(r, 350));
+        const { lat, lng } = await armonizzaSingola({ chk: c.chk, lat: c.lat, lng: c.lng }, ui.setLogs, settings);
 
-        const total = cabine.length;
-        const crop = 500;
+        pushLog(ui.setLogs, `Scatto a zoom ${settings.targetZoom}…`);
+        const shot = await scatta(map, settings);
+        const centerCoords = getCenterCoords(); // letti dall’overlay live
+        const poligoniPx = await segmenta({ image: shot.dataUrl, center: centerCoords, crop: shot.crop, zoom: shot.zoom }, ui.setLogs);
+        const converted = convertPolygonData(poligoniPx, {
+          crop_width: shot.crop, crop_height: shot.crop, zoom: shot.zoom,
+          centerLat: centerCoords[0], centerLng: centerCoords[1], bearing: shot.bearing
+        });
 
-        let i = 0;
-        for (const cab of cabine) {
-          i++;
-          ui.setStatus(`(${i}/${total}) ${cab.chk ?? ""} • acquisizione`);
+        converted.forEach(p => {
+          outRows.push({
+            chk: c.chk, tipo: p.label || p.tipo || 'n/d',
+            mq: p.mq ?? 0, lat: lat, lng: lng
+          });
+        });
 
-          // pulizia residui
-          setArmonizedMarker(null);
-          setPolygonData(null);
-
-          // 1) centra mappa e aspetta
-          const target = [Number(cab.lat), Number(cab.lng)];
-          setCoords(target);
-          const map = mapRef.current;
-          if (map) map.setView(target, 19, { animate: false });
-          await waitForMapToSettle(map);
-
-          // 2) screenshot
-          setHideMarkers(true);
-          hideCaptureUi(true);
-          await raf2();
-
-          let dataUrl;
-          try {
-            dataUrl = await captureCenteredSquare(crop);
-          } finally {
-            hideCaptureUi(false);
-            setHideMarkers(false);
-          }
-
-          const center = map.getCenter();
-          const zoom = map.getZoom();
-          const bearing = map.getBearing ? map.getBearing() : 0;
-
-          // 3) SOLO PREVIEW POLIGONI con il microservizio AI (N O  S A L V A)
-          if (drawPolygons) {
-            try {
-              const segAI = await fetchWithWatchdog(
-                "http://localhost:9000/segmenta_ai",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    image: dataUrl,
-                    lat: center.lat,
-                    lng: center.lng,
-                    zoom,
-                    crop_width: crop,
-                    crop_height: crop,
-                  }),
-                },
-                60000
-              );
-              const segJson = await segAI.json();
-              if (!segAI.ok)
-                throw new Error(segJson?.detail || `HTTP ${segAI.status}`);
-
-              if (Array.isArray(segJson.poligoni)) {
-                const conv = convertPolygonData(segJson.poligoni, {
-                  crop_width: crop,
-                  crop_height: crop,
-                  zoom,
-                  centerLat: center.lat,
-                  centerLng: center.lng,
-                });
-                setPolygonData(conv);
-                await waitForPolygonsDrawn(map);
-              }
-            } catch (err) {
-              ui.setLogs((p) => [
-                ...p,
-                `⚠️ ${cab.chk}: preview poligoni fallita (${String(err)})`,
-              ]);
-            }
-          }
-
-          // 4) NORMALIZZAZIONE GUIDATA DAL BACKEND
-          ui.setStatus(`(${i}/${total}) ${cab.chk ?? ""} • norm …`);
-
-          let step = 0;
-          while (true) {
-            step += 1;
-
-            const payload =
-              step === 1
-                ? {
-                    chk: cab.chk,
-                    zoom,
-                    crop_size: crop,
-                    image: dataUrl,
-                    bearing,
-                  } // prima iterazione → lat/lng dal DB
-                : {
-                    chk: cab.chk,
-                    zoom,
-                    crop_size: crop,
-                    image: dataUrl,
-                    bearing,
-                    lat: target[0],
-                    lng: target[1],
-                  };
-
-            let normJson;
-            try {
-              const resp = await fetchWithWatchdog(
-                "http://localhost:8000/update_centered_coord",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(payload),
-                },
-                60000
-              );
-              normJson = await resp.json();
-              if (!resp.ok)
-                throw new Error(normJson?.detail || `HTTP ${resp.status}`);
-            } catch (err) {
-              ui.setLogs((p) => [
-                ...p,
-                `❌ ${cab.chk}: normalizzazione fallita (${String(err)})`,
-              ]);
-              break;
-            }
-
-            const {
-              new_lat,
-              new_lng,
-              done: doneServer,
-              final_distance_px,
-              density_score,
-              message,
-            } = normJson;
-
-            // UI/log
-            setArmonizedMarker({ lat: new_lat, lng: new_lng, chk: cab.chk });
-            ui.setLogs((p) => [
-              ...p,
-              `• ${cab.chk} – norm step ${step}  dist:${Number(
-                final_distance_px
-              ).toFixed?.(1) ?? "?"}px  dens:${density_score ?? "?"}  ${
-                message ?? ""
-              }`,
-            ]);
-
-            // prossimo giro (se serve)
-            target[0] = new_lat;
-            target[1] = new_lng;
-
-            const done =
-              typeof doneServer === "boolean"
-                ? doneServer
-                : Number.isFinite(final_distance_px) && final_distance_px < 20;
-
-            if (done) {
-              if (map) {
-                map.setView([new_lat, new_lng], 19, { animate: false });
-                await waitForMapToSettle(map);
-              }
-              break;
-            }
-          }
-
-          // 5) pulizia poligoni prima della cabina successiva
-          setPolygonData(null);
-
-          ui.setProgress(Math.round((i / total) * 100));
-        }
-
-        ui.setStatus("Finito");
-      } finally {
-        runningRef.current = false;
-        hideCaptureUi(false);
-        setHideMarkers(false);
+        pushLog(ui.setLogs, `OK. Poligoni: ${converted.length}.`);
+      } catch (e) {
+        pushLog(ui.setLogs, `ERRORE: ${e.message || e}`, 'error');
       }
-    },
-    [mapRef, setCoords, setHideMarkers, setArmonizedMarker, setPolygonData, drawPolygons]
-  );
+    }
+
+    ui.setStatus(`Completato. Genero Excel…`);
+    ui.setProgress(1);
+    toXlsx(outRows);
+    pushLog(ui.setLogs, `Excel scritto con ${outRows.length} righe.`);
+    ui.setStatus(`Fatto.`);
+  }
 
   return { runBatch };
 }
