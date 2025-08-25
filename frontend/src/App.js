@@ -26,33 +26,74 @@ const tipoFromRow = (row) => {
 const CLEAN = (v) => (v === null || v === undefined || v === "" ? "[null]" : String(v));
 
 // --- HELPERS PER CAPTURE ----------------------------------------------------
-async function waitForMapToSettle(map) {
+// Attende che la mappa sia "idle" senza usare proprietà private Leaflet
+async function waitForMapToSettle(map, maxWaitMs = 800) {
   if (!map) return;
 
-  // aspetta fine animazioni pan/zoom
-  await new Promise((res) => {
-    const idle = !map._animatingZoom && !map._panAnim;
-    if (idle) return res();
-    const once = () => { map.off('moveend', once); map.off('zoomend', once); res(); };
-    map.on('moveend', once);
-    map.on('zoomend', once);
+  // 1) dai un frame al layout
+  await new Promise(r => requestAnimationFrame(r));
+
+  // 2) aspetta il primo moveend/zoomend SE arriva, altrimenti sblocca con timeout
+  await new Promise(res => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      map.off("moveend", finish);
+      map.off("zoomend", finish);
+      res();
+    };
+    const t = setTimeout(finish, maxWaitMs);
+    map.once("moveend", () => { clearTimeout(t); finish(); });
+    map.once("zoomend", () => { clearTimeout(t); finish(); });
+
+    // 3) fallback extra: se non succede nulla, rilascia comunque dopo 2 frame
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      clearTimeout(t);
+      finish();
+    }));
+  });
+}
+
+// Attende che tutte le tile visibili siano caricate (img.complete && naturalWidth>0)
+async function waitForTilesComplete(container, timeoutMs = 4000) {
+  const start = performance.now();
+  while (true) {
+    const tiles = Array.from(container.querySelectorAll('img.leaflet-tile'));
+    const allOk = tiles.length > 0 && tiles.every(img => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+    if (allOk) return;
+    if (performance.now() - start > timeoutMs) return;
+    await new Promise(r => requestAnimationFrame(r));
+  }
+}
+
+// Cattura robusta + crop centrale, con attese su mappa e tile
+async function snapshotMapCrop(leafletElement, map, cropSize = 500) {
+  await new Promise(r => requestAnimationFrame(r));                // 1 frame
+  await waitForMapToSettle(map);                                   // mappa idle
+  await waitForTilesComplete(leafletElement, 4000);                 // tile pronte
+  await new Promise(r => requestAnimationFrame(r));                 // paint finale
+
+  const fullCanvas = await html2canvas(leafletElement, {
+    useCORS: true,
+    backgroundColor: null,
+    logging: false,
+    scale: 1
   });
 
-  // aspetta che i TileLayer abbiano caricato le tile correnti
-  const layers = [];
-  map.eachLayer((l) => { if (l instanceof L.TileLayer) layers.push(l); });
-  await Promise.all(
-    layers.map((l) => new Promise((res) => {
-      // se non sta caricando, via subito
-      if (!l._loading) return res();
-      const onLoad = () => { l.off('load', onLoad); res(); };
-      l.on('load', onLoad);
-    }))
-  );
+  const rect = leafletElement.getBoundingClientRect();
+  const scaleFactor = fullCanvas.width / rect.width;
+  const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+  const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
 
-  // due frame per sicurezza (paint completo)
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const cropped = document.createElement('canvas');
+  cropped.width = cropSize;
+  cropped.height = cropSize;
+  const ctx = cropped.getContext('2d');
+  ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+  return cropped.toDataURL();
 }
+
 
 function toggleCaptureUiHidden(hide) {
   document.querySelectorAll('.capture-hide').forEach((el) => {
@@ -701,44 +742,23 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
 
   const handleShot = async () => {
   if (!overlayRef.current) return;
-  const leafletElement = document.querySelector('.leaflet-container');
+  const leafletElement = document.querySelector(".leaflet-container");
+  const map = mapRef.current;
 
-  const originalTransform = leafletElement.parentElement.style.transform;
   try {
-    // nascondi overlay e UI
-    overlayRef.current.style.display = 'none';
+    // nascondi il riquadro, NON toccare i transform del parent
+    overlayRef.current.style.visibility = "hidden";
     setHideMarkers(true);
     toggleCaptureUiHidden(true);
-    leafletElement.parentElement.style.transform = "none";
 
     await new Promise(r => requestAnimationFrame(r));
-    await Promise.race([
-      waitForMapToSettle(mapRef.current),
-      new Promise(res => setTimeout(res, 1500))
-    ]);
-
-    const fullCanvas = await html2canvas(leafletElement, {
-      useCORS: true,
-      backgroundColor: null,
-      allowTaint: true,
-      logging: false,
-      scale: 1,
-    });
+    await waitForMapToSettle(map);
+    await waitForTilesComplete(leafletElement, 4000);
 
     const cropSize = 500;
-    const rect = leafletElement.getBoundingClientRect();
-    const scaleFactor = fullCanvas.width / rect.width;
-    const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
-    const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+    const dataUrl = await snapshotMapCrop(leafletElement, map, cropSize);
 
-    const cropped = document.createElement('canvas');
-    cropped.width = cropSize;
-    cropped.height = cropSize;
-    const ctx = cropped.getContext('2d');
-    ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
-
-    const dataUrl = cropped.toDataURL();
-    const zoom = mapRef.current?.getZoom() ?? 19;
+    const zoom = map?.getZoom() ?? 19;
     const center = centerCoords || [0, 0];
 
     onConfirm(dataUrl, {
@@ -748,16 +768,16 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
       zoomRef: zoom,
       centerLat: center[0],
       centerLng: center[1],
-      bearing: mapRef.current?.getBearing?.() ?? 0
+      bearing: map?.getBearing?.() ?? 0
     });
   } finally {
-    leafletElement.parentElement.style.transform = originalTransform;
     toggleCaptureUiHidden(false);
-    if (overlayRef.current) overlayRef.current.style.display = 'block';
     setHideMarkers(false);
+    overlayRef.current.style.visibility = "visible";
+    await new Promise(r => requestAnimationFrame(r));
+    mapRef.current?.invalidateSize(false);
   }
 };
-
 
   return (
     <div
@@ -1147,76 +1167,58 @@ function App() {
   let currentLng = parseFloat(lng);
   const maxIter = 5;
   const cropSize = 500;
-  const leafletElement = document.querySelector('.leaflet-container');
+  const leafletElement = document.querySelector(".leaflet-container");
+  const map = mapRef.current;
 
-  // nascondi tutto fin da subito
-  setHideMarkers(true);
-  toggleCaptureUiHidden(true);
+  for (let step = 1; step <= maxIter; step++) {
 
-  try {
-    for (let step = 1; step <= maxIter; step++) {
-      const parent = leafletElement.parentElement;
-      const originalTransform = parent.style.transform;
-      parent.style.transform = "none";
-      try {
-        await new Promise(r => requestAnimationFrame(r));
-        await waitForMapToSettle(mapRef.current);
+    try {
+      // assicurati che la mappa sia “idle” e le tile pronte
+      await new Promise(r => requestAnimationFrame(r));
+      await waitForMapToSettle(map);
+      await waitForTilesComplete(leafletElement, 4000);
 
-        const fullCanvas = await html2canvas(leafletElement, {
-          useCORS: true,
-          backgroundColor: null,
-          allowTaint: true,
-          logging: false,
-          scale: 1
-        });
+      // scatto
+      const imageData = await snapshotMapCrop(leafletElement, map, cropSize);
 
-        const rect = leafletElement.getBoundingClientRect();
-        const scaleFactor = fullCanvas.width / rect.width;
-        const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
-        const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+      // chiamata backend
+      const body = {
+        chk: idCabina,
+        zoom: map?.getZoom() ?? 18,
+        crop_size: cropSize,
+        image: imageData,
+        bearing: map?.getBearing?.() ?? 0,
+        ...(step > 1 ? { lat: currentLat, lng: currentLng } : {})
+      };
 
-        const cropped = document.createElement('canvas');
-        cropped.width = cropSize;
-        cropped.height = cropSize;
-        const ctx = cropped.getContext('2d');
-        ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
-        const imageData = cropped.toDataURL();
-
-        const body = {
-          chk: idCabina,
-          zoom: mapRef.current?.getZoom() ?? 18,
-          crop_size: cropSize,
-          image: imageData,
-          bearing: mapRef.current?.getBearing?.() ?? 0
-        };
-        if (step > 1) { body.lat = currentLat; body.lng = currentLng; }
-
-        const resp = await fetch("http://localhost:8000/update_centered_coord", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        const result = await resp.json();
-        if (!resp.ok) {
-          alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
-          return;
-        }
-
-        currentLat = result.new_lat;
-        currentLng = result.new_lng;
-        setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
-        setCoords([currentLat, currentLng]);
-        if (mapRef.current) mapRef.current.setView([currentLat, currentLng], 18);
-
-        if (result.done) break;
-        await new Promise(r => setTimeout(r, 200));
-      } finally {
-        parent.style.transform = originalTransform;
+      const resp = await fetch("http://localhost:8000/update_centered_coord", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const result = await resp.json();
+      if (!resp.ok) {
+        alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
+        break;
       }
+
+      currentLat = result.new_lat;
+      currentLng = result.new_lng;
+
+      setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
+      setCoords([currentLat, currentLng]);
+
+      // niente animazioni (evita attese di 'zoomend'/'moveend')
+      map?.setView([currentLat, currentLng], 18, { animate: false });
+
+      if (result.done) break;
+
+      // piccola pausa tra gli step
+      await new Promise(r => setTimeout(r, 150));
+    } finally {
+      await new Promise(r => requestAnimationFrame(r));
+      map?.invalidateSize(false);
     }
-  } finally {
-    toggleCaptureUiHidden(false);
-    setHideMarkers(false);
   }
 }
 
