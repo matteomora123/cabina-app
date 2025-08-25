@@ -1,0 +1,2343 @@
+### ISTRUZIONI IA ###
+Agisci come assistente di programmazione. Questo file è il contesto iniziale.
+Contiene: backend completo e solo App.js (frontend/src).
+Rimani in attesa: non proporre modifiche finché non richiesto.
+Quando richiesto, rispondi sempre con:
+ - codice pronto per copia/incolla;
+ - file da modificare e riga dopo cui inserire la modifica.
+
+### METADATI ###
+{
+  "root": "C:\\Users\\matte\\PycharmProjects\\cabina-app",
+  "generated_at": "2025-08-25T14:09:31.120260Z",
+  "sections": [
+    "backend",
+    "frontend/src(App.js)"
+  ],
+  "files": []
+}
+
+
+### Sezione: backend
+
+================================================================================
+File: backend\ai_client.py
+Size: 662 bytes
+SHA256: eea373078bbe6f68e11c019f4a8c1ae4347f709caeeb7d9257654f67ee0ecc99
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\ai_client.py e la riga dopo cui inserire la modifica.
+
+# back end/ ai_client.py
+import httpx
+from schemas import AIRequest
+
+async def call_ai_segmenta(image_b64: str, lat: float, lng: float, crop_width: int = None, crop_height: int = None, zoom: int = None):
+    url = "http://localhost:9000/segmenta_ai"
+    req = {
+        "image": image_b64,
+        "lat": lat,
+        "lng": lng,
+        "crop_width": crop_width,
+        "crop_height": crop_height,
+        "zoom": zoom,
+    }
+    # Elimina None prima di inviare
+    req = {k: v for k, v in req.items() if v is not None}
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, json=req)
+        return resp.json()
+
+================================================================================
+================================================================================
+File: backend\db.py
+Size: 458 bytes
+SHA256: 45d221b9ff442a5dec61bcbb069a9edf898ed32c389cd80322d443540b87b8f1
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\db.py e la riga dopo cui inserire la modifica.
+
+# backend/db.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+# Cambia con le tue credenziali
+DATABASE_URL = "postgresql+asyncpg://postgres:1234@localhost:5432/cabine_primarie"
+
+# Creazione engine asincrono
+engine = create_async_engine(DATABASE_URL, echo=True)
+
+# Session factory
+SessionLocal = sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    class_=AsyncSession
+)
+
+================================================================================
+================================================================================
+File: backend\main.py
+Size: 18245 bytes
+SHA256: 37de88054aa4015c78a0c8453813d367e686297eb4cb9f3a5e72c03429800343
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\main.py e la riga dopo cui inserire la modifica.
+
+# backend/main.py
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from armonizzazione_single_cabin import router as armonizzazione_router
+from schemas import AIRequest
+from db import SessionLocal
+import httpx
+from fastapi.responses import JSONResponse
+from typing import List, Optional
+import asyncio
+
+app = FastAPI()
+limits = httpx.Limits(max_keepalive_connections=5, max_connections=8)
+timeout = httpx.Timeout(60.0)
+ai_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+ai_semaphore = asyncio.Semaphore(4)  # max 4 richieste AI contemporanee
+
+FAKE_CABINE = [
+    {"id": 37259, "id_cab": 51844, "denom": "VASTO", "tipo_nodo": "AM", "chk": "DJ001380914", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA ABRUZZO MARCHE E MOLISE", "regione": "ABRUZZO", "provincia": "CH", "lng": 14.694731762253099, "lat": 42.1511083275595},
+    {"id": 228017, "id_cab": 237478, "denom": "SANTERAMO CP", "tipo_nodo": "AM", "chk": "DW001383828", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA ABRUZZO MARCHE E MOLISE", "regione": "ABRUZZO", "provincia": "AQ", "lng": 16.690511932089, "lat": 40.7310672733221},
+    {"id": 34905, "id_cab": 41475, "denom": "PISTICCI CP", "tipo_nodo": "AM", "chk": "DW001382739", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA PUGLIA E BASILICATA", "regione": "BASILICATA", "provincia": "MT", "lng": 16.5434637957144, "lat": 40.41656625131579},
+    {"id": 79188, "id_cab": 102229, "denom": "ROSSANO", "tipo_nodo": "AM", "chk": "DK001382901", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA CALABRIA", "regione": "CALABRIA", "provincia": "CS", "lng": 16.6455273207324, "lat": 39.5909050795306},
+    {"id": 37950, "id_cab": 51862, "denom": "CASALNUOVO", "tipo_nodo": "AM", "chk": "DN001375784", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA CAMPANIA", "regione": "CAMPANIA", "provincia": None, "lng": 14.354181754521099, "lat": 40.922248095875894},
+    {"id": 44894, "id_cab": 51056, "denom": "PIACENZA LUNGOPO", "tipo_nodo": "CU", "chk": "DE001384249", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA EMILIA ROMAGNA", "regione": "EMILIA ROMAGNA", "provincia": "PC", "lng": 9.706005079380049, "lat": 45.0571725101022},
+    {"id": 52412, "id_cab": 50517, "denom": "OVARO", "tipo_nodo": "AM", "chk": "DV001384241", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA VENETO-FRIULI VENEZIA GIULIA", "regione": "FRIULI-VENEZIA GIULIA", "provincia": "UD", "lng": 12.8631686593453, "lat": 46.509824296031894},
+    {"id": 82957, "id_cab": 63842, "denom": "CONS. S.DORLIGO", "tipo_nodo": "CU", "chk": "DV001384085", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA VENETO-FRIULI VENEZIA GIULIA", "regione": "FRIULI VENEZIA GIULIA", "provincia": "UD", "lng": 13.853089129003399, "lat": 45.6142475502188},
+    {"id": 36352, "id_cab": 47211, "denom": "TARQUINIA", "tipo_nodo": "AM", "chk": "DL001381285", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA LAZIO", "regione": "LAZIO", "provincia": "VT", "lng": 11.7369164719456, "lat": 42.2415653023614},
+    {"id": 42060, "id_cab": 45532, "denom": "CEMENTILCE", "tipo_nodo": "CU", "chk": "DY001380232", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA PIEMONTE E LIGURIA", "regione": "LIGURIA", "provincia": "SV", "lng": 8.29908726932315, "lat": 44.3691261496075},
+    {"id": 43716, "id_cab": 51980, "denom": "CONCESIO", "tipo_nodo": "AM", "chk": "DU001384572", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA LOMBARDIA", "regione": "LOMBARDIA", "provincia": "BS", "lng": 10.2086952153121, "lat": 45.605127537758094},
+    {"id": 48721, "id_cab": 43093, "denom": "BELFORTE", "tipo_nodo": "AM", "chk": "DJ001381986", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA ABRUZZO MARCHE E MOLISE", "regione": "MARCHE", "provincia": "MC", "lng": 13.240689825796, "lat": 43.1641039024138},
+    {"id": 36625, "id_cab": 43922, "denom": "CAMPOBASSO", "tipo_nodo": "AM", "chk": "DJ001385788", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA ABRUZZO MARCHE E MOLISE", "regione": "MOLISE", "provincia": "CB", "lng": 14.64983992001, "lat": 41.5544096682648},
+    {"id": 11, "id_cab": 3385, "denom": "INCISA SCAPACCINO", "tipo_nodo": "AM", "chk": "DY001383458", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA PIEMONTE E LIGURIA", "regione": "PIEMONTE", "provincia": "AT", "lng": 8.37285056427705, "lat": 44.7866262238093},
+    {"id": 43760, "id_cab": 48276, "denom": "GRAVINA CP", "tipo_nodo": "AM", "chk": "DW001383814", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA PUGLIA E BASILICATA", "regione": "PUGLIA", "provincia": "BA", "lng": 16.448530513651697, "lat": 40.814570748499},
+    {"id": 70196, "id_cab": 96904, "denom": "ARZACHENA 2", "tipo_nodo": "AM", "chk": "D7001381613", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA SARDEGNA", "regione": "SARDEGNA", "provincia": "SS", "lng": 9.40248161709222, "lat": 41.0652650967237},
+    {"id": 60241, "id_cab": 58380, "denom": "T. NATALE", "tipo_nodo": "AM", "chk": "D8001383524", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA SICILIA", "regione": "SICILIA", "provincia": "PA", "lng": 13.2944901299017, "lat": 38.1867306315866},
+    {"id": 33558, "id_cab": 51771, "denom": "S.LORENZO A GREVE", "tipo_nodo": "AM", "chk": "DX001384062", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA TOSCANA E UMBRIA", "regione": "TOSCANA", "provincia": "FI", "lng": 11.2007645470475, "lat": 43.7677813922474},
+    {"id": 39975, "id_cab": 42780, "denom": "MAGIONE", "tipo_nodo": "AM", "chk": "DX001382189", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA TOSCANA E UMBRIA", "regione": "UMBRIA", "provincia": "PG", "lng": 12.2101446372229, "lat": 43.1391830242683},
+    {"id": 35665, "id_cab": 51174, "denom": "VI MONTEVIALE", "tipo_nodo": "AM", "chk": "DV001384296", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA VENETO-FRIULI VENEZIA GIULIA", "regione": "VENETO", "provincia": "VI", "lng": 11.4889062919471, "lat": 45.5653605014245}
+]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(armonizzazione_router.router)
+
+def _tipo_expr():
+    return "COALESCE(NULLIF(tipo_cabina,''), 'e-distribuzione')"
+
+def _in_clause_from_list(name, values):
+    placeholders = []
+    params = {}
+    for i, v in enumerate(values):
+        placeholders.append(f":{name}{i}")
+        params[f"{name}{i}"] = v
+    return ", ".join(placeholders), params
+
+@app.get("/filters/area_regionale")
+async def list_area_regionale(tipo: List[str] = None):
+    try:
+        async with SessionLocal() as session:
+            sql = """
+                SELECT DISTINCT area_regionale
+                FROM public.cabine
+                WHERE area_regionale IS NOT NULL
+            """
+            params = {}
+            if tipo:
+                plc, p = _in_clause_from_list("t", tipo)
+                sql += f" AND {_tipo_expr()} IN ({plc})"
+                params.update(p)
+            sql += " ORDER BY area_regionale"
+            res = await session.execute(text(sql), params)
+            return {"options": [r.area_regionale for r in res.fetchall()]}
+    except Exception:
+        return {"options": []}
+
+@app.get("/filters/regione")
+async def list_regione(tipo: List[str] = None, area_regionale: Optional[str] = None):
+    try:
+        async with SessionLocal() as session:
+            sql = """
+                SELECT DISTINCT regione
+                FROM public.cabine
+                WHERE regione IS NOT NULL
+            """
+            params = {}
+            if tipo:
+                plc, p = _in_clause_from_list("t", tipo)
+                sql += f" AND {_tipo_expr()} IN ({plc})"
+                params.update(p)
+            if area_regionale:
+                sql += " AND area_regionale = :area_regionale"
+                params["area_regionale"] = area_regionale
+            sql += " ORDER BY regione"
+            res = await session.execute(text(sql), params)
+            return {"options": [r.regione for r in res.fetchall()]}
+    except Exception:
+        return {"options": []}
+
+@app.get("/filters/provincia")
+async def list_provincia(
+    tipo: List[str] = None,
+    area_regionale: Optional[str] = None,
+    regione: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 30
+):
+    try:
+        async with SessionLocal() as session:
+            sql = """
+                SELECT DISTINCT provincia
+                FROM public.cabine
+                WHERE provincia IS NOT NULL AND provincia <> ''
+            """
+            params = {"limit": limit}
+            if tipo:
+                plc, p = _in_clause_from_list("t", tipo)
+                sql += f" AND {_tipo_expr()} IN ({plc})"
+                params.update(p)
+            if area_regionale:
+                sql += " AND area_regionale = :area_regionale"
+                params["area_regionale"] = area_regionale
+            if regione:
+                sql += " AND regione = :regione"
+                params["regione"] = regione
+            if q:
+                sql += " AND UPPER(provincia) LIKE UPPER(:q || '%')"
+                params["q"] = q
+            sql += " ORDER BY provincia LIMIT :limit"
+            res = await session.execute(text(sql), params)
+            return {"options": [r.provincia for r in res.fetchall()]}
+    except Exception:
+        return {"options": []}
+
+@app.get("/cabine")
+async def get_cabine(
+    tipo: List[str] | None = Query(default=None),
+    area_regionale: Optional[str] = None,
+    regione: Optional[str] = None,
+    provincia: Optional[str] = None,
+):
+    try:
+        async with SessionLocal() as session:
+            sql = """
+                SELECT id, id_cab, denom, tipo_nodo, chk,
+                       COALESCE(NULLIF(tipo_cabina, ''), 'e-distribuzione') AS tipo_cabina,
+                       area_regionale, regione, provincia,
+                       ST_X(geom::geometry) AS lng,
+                       ST_Y(geom::geometry) AS lat
+                FROM public.cabine
+                WHERE 1=1
+            """
+            params = {}
+            if tipo:
+                plc, p = _in_clause_from_list("t", tipo)
+                sql += f" AND {_tipo_expr()} IN ({plc})"
+                params.update(p)
+            if area_regionale:
+                sql += " AND area_regionale = :area_regionale"
+                params["area_regionale"] = area_regionale
+            if regione:
+                sql += " AND regione = :regione"
+                params["regione"] = regione
+            if provincia:
+                sql += " AND UPPER(provincia) LIKE UPPER(:provincia || '%')"
+                params["provincia"] = provincia
+            sql += " ORDER BY id"
+            result = await session.execute(text(sql), params)
+            rows = result.fetchall()
+            return {"data": [dict(row._mapping) for row in rows]}
+    except Exception as e:
+        print("[WARN] Errore /cabine:", e)
+        return {"data": []}
+
+@app.get("/cabina_near")
+async def get_cabina_near(lat: float, lng: float):
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT chk, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
+                       denom,
+                       ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography) as dist
+                FROM public.cabine
+                ORDER BY dist ASC
+                LIMIT 1
+            """), {"lat": lat, "lng": lng})
+            row = result.fetchone()
+            if row:
+                return dict(row._mapping)
+            raise HTTPException(status_code=404, detail="Nessuna cabina trovata vicino")
+    except Exception:
+        import math
+        cabina = min(FAKE_CABINE, key=lambda c: math.sqrt((c["lat"] - lat)**2 + (c["lng"] - lng)**2))
+        return {k: cabina[k] for k in ["chk", "lat", "lng", "denom"]}
+
+@app.get("/cabina/{chk}")
+async def get_cabina_by_chk(chk: str):
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT ST_Y(geom::geometry) AS lat,
+                       ST_X(geom::geometry) AS lng,
+                       denom, chk
+                FROM public.cabine
+                WHERE chk = :chk
+            """), {"chk": chk})
+            row = result.fetchone()
+            if row:
+                return dict(row._mapping)
+            raise HTTPException(status_code=404, detail="Cabina non trovata")
+    except Exception:
+        for cab in FAKE_CABINE:
+            if cab["chk"] == chk:
+                return {k: cab[k] for k in ["lat", "lng", "denom", "chk"]}
+        raise HTTPException(status_code=404, detail="Cabina non trovata (fake)")
+
+@app.get("/filters/aree")
+async def get_aree(tipo: list[str] = None):
+    try:
+        async with SessionLocal() as session:
+            where = ""
+            params = {}
+            if tipo:
+                tipi_norm = [None if t == "e-distribuzione" else t for t in tipo]
+                null_selected = any(t is None for t in tipi_norm)
+                values = [t for t in tipi_norm if t is not None]
+                parts = []
+                if values:
+                    plc, p = _in_clause_from_list("t", values)
+                    parts.append(f"tipo_cabina IN ({plc})")
+                    params.update(p)
+                if null_selected:
+                    parts.append("tipo_cabina IS NULL")
+                where = "WHERE " + " OR ".join(parts) if parts else ""
+            q = f"""SELECT DISTINCT area_regionale FROM public.cabine {where} ORDER BY area_regionale"""
+            res = await session.execute(text(q), params)
+            return {"data": [r.area_regionale for r in res.fetchall()]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/filters/regioni")
+async def get_regioni(tipo: list[str] = None, area: str | None = None):
+    try:
+        async with SessionLocal() as session:
+            clauses = []
+            params = {}
+            if tipo:
+                tipi_norm = [None if t == "e-distribuzione" else t for t in tipo]
+                null_selected = any(t is None for t in tipi_norm)
+                values = [t for t in tipi_norm if t is not None]
+                sub = []
+                if values:
+                    plc, p = _in_clause_from_list("t", values)
+                    sub.append(f"tipo_cabina IN ({plc})")
+                    params.update(p)
+                if null_selected:
+                    sub.append("tipo_cabina IS NULL")
+                if sub:
+                    clauses.append("(" + " OR ".join(sub) + ")")
+            if area:
+                clauses.append("area_regionale = :area")
+                params["area"] = area
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            q = f"""SELECT DISTINCT regione FROM public.cabine {where} ORDER BY regione"""
+            res = await session.execute(text(q), params)
+            return {"data": [r.regione for r in res.fetchall()]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/filters/province")
+async def get_province(tipo: list[str] = None, area: str | None = None, regione: str | None = None, q: str | None = None):
+    try:
+        async with SessionLocal() as session:
+            clauses = []
+            params = {}
+            if tipo:
+                tipi_norm = [None if t == "e-distribuzione" else t for t in tipo]
+                null_selected = any(t is None for t in tipi_norm)
+                values = [t for t in tipi_norm if t is not None]
+                sub = []
+                if values:
+                    plc, p = _in_clause_from_list("t", values)
+                    sub.append(f"tipo_cabina IN ({plc})")
+                    params.update(p)
+                if null_selected:
+                    sub.append("tipo_cabina IS NULL")
+                if sub:
+                    clauses.append("(" + " OR ".join(sub) + ")")
+            if area:
+                clauses.append("area_regionale = :area")
+                params["area"] = area
+            if regione:
+                clauses.append("regione = :reg")
+                params["reg"] = regione
+            if q:
+                clauses.append("provincia ILIKE :q")
+                params["q"] = q.upper() + "%"
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            sql = f"""SELECT DISTINCT provincia FROM public.cabine {where} ORDER BY provincia"""
+            res = await session.execute(text(sql), params)
+            return {"data": [r.provincia for r in res.fetchall()]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/segmenta")
+async def segmenta_cabina(req: AIRequest):
+    try:
+        async with ai_semaphore:  # back-pressure
+            response = await ai_client.post(
+                "http://localhost:9000/segmenta_ai",
+                json={
+                    "image": req.image,
+                    "lat": req.lat,
+                    "lng": req.lng,
+                    "crop_width": getattr(req, "crop_width", None),
+                    "crop_height": getattr(req, "crop_height", None),
+                    "zoom": getattr(req, "zoom", None),
+                }
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.ReadTimeout:
+        return JSONResponse(status_code=504, content={"detail": "Timeout: l'analisi AI è troppo lenta."})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": f"Errore AI: {str(e)}"})
+
+@app.on_event("shutdown")
+async def _close_clients():
+    await ai_client.aclose()
+
+================================================================================
+================================================================================
+File: backend\schemas.py
+Size: 610 bytes
+SHA256: 0791027bafe7861ac8f3b25ad860c87180734f4684be82dad9860ccecf1137a1
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\schemas.py e la riga dopo cui inserire la modifica.
+
+# backend/schemas.py
+from pydantic import BaseModel
+from typing import List, Optional
+
+class Point(BaseModel):
+    lat: float
+    lng: float
+
+class PolygonZone(BaseModel):
+    label: str
+    tipo: str
+    points: List[List[float]]
+    mq: float
+    color: Optional[str]
+    properties: dict = {}
+
+class AIRequest(BaseModel):
+    image: str   # base64
+    lat: float
+    lng: float
+    crop_width: Optional[int] = None
+    crop_height: Optional[int] = None
+    zoom: Optional[float] = None
+
+
+class AIResponse(BaseModel):
+    poligoni: List[PolygonZone]
+    cabina_chk: Optional[str]
+
+================================================================================
+================================================================================
+File: backend\ai_microservice\ai_api.py
+Size: 5521 bytes
+SHA256: 1cf5d74f87914665499eb27b6d97e1d583e8a4a2f51670f5579594e6d88e29a9
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\ai_microservice\ai_api.py e la riga dopo cui inserire la modifica.
+
+# backend/ai_microservice/ai_api.py
+
+from fastapi import FastAPI, BackgroundTasks
+from pydantic import BaseModel
+from io import BytesIO
+import base64
+from PIL import Image
+import torch
+import numpy as np
+from transformers import SegformerForSemanticSegmentation, SegformerFeatureExtractor
+import cv2
+import os
+from datetime import datetime
+
+# Abilita autotuning delle convoluzioni (utile quando le dimensioni input si ripetono)
+torch.backends.cudnn.benchmark = True
+
+# ======= MAPPING CLASSI CVAT =======
+CVAT_CLASSES = [
+    {"id": 0, "label": "background",           "color": "#000000"},
+    {"id": 1, "label": "Stalli AT",            "color": "#FFA07A"},
+    {"id": 2, "label": "Locale AT/MT",         "color": "#FFE082"},
+    {"id": 3, "label": "Parcheggio",           "color": "#B39DDB"},
+    {"id": 4, "label": "Zona libera/Verde",    "color": "#B2DFDB"},
+    {"id": 5, "label": "arrivo AT",            "color": "#F48FB1"},
+    {"id": 6, "label": "Strada",               "color": "#F8BBD0"}
+]
+ID_TO_CLASS = {c["id"]: c for c in CVAT_CLASSES}
+PALETTE = {c["id"]: tuple(int(c["color"].lstrip("#")[i:i+2], 16) for i in (0, 2, 4)) for c in CVAT_CLASSES}
+
+# Percorsi modello e output
+MODEL_PATH = r"..\segformer\segformer_finetuned"
+OUTPUT_DIR = r"ai_microservice\output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+print("Caricamento modello e feature_extractor...")
+model = SegformerForSemanticSegmentation.from_pretrained(MODEL_PATH)
+feature_extractor = SegformerFeatureExtractor.from_pretrained(MODEL_PATH)
+model.eval()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+# Usa FP16 su GPU per inferenza più veloce/leggera
+if device.type == "cuda":
+    model.half()
+
+app = FastAPI()
+
+class SegmentRequest(BaseModel):
+    image: str  # base64-encoded JPEG/PNG
+
+def overlay_mask_on_image(image, pred, alpha=0.45):
+    image = np.array(image.convert("RGB"))
+    mask_rgb = np.zeros_like(image)
+    for k, rgb in PALETTE.items():
+        mask_rgb[pred == k] = rgb
+    overlay = (image * (1 - alpha) + mask_rgb * alpha).astype(np.uint8)
+    return overlay
+
+def save_overlay(img, pred, out_dir: str = OUTPUT_DIR):
+    """
+    Scrive l'overlay su disco. Funzione 'stateless' così può essere lanciata in background
+    senza interferenze con la risposta HTTP.
+    """
+    base_name = datetime.now().strftime("%Y%m%d")
+    prog = 1
+    while True:
+        out_name = f"{base_name}_{prog}.jpg"
+        out_path = os.path.join(out_dir, out_name)
+        if not os.path.exists(out_path):
+            break
+        prog += 1
+    overlay_img = overlay_mask_on_image(img, pred)
+    Image.fromarray(overlay_img).save(out_path)
+    print(f"[SALVATO] Overlay maschera: {out_path}")
+
+@app.post("/segmenta_ai")
+async def segmenta_ai(req: SegmentRequest, background_tasks: BackgroundTasks):
+    try:
+        print("\n--- DEBUG ---\nRicevuta immagine base64 di lunghezza:", len(req.image))
+        header, encoded = req.image.split(',', 1)
+        img = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
+        print("Immagine decodificata, shape:", img.size)
+
+        # Preprocessing
+        inputs = feature_extractor(images=img, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        # Inferenza no-grad; se GPU, usa mixed precision (autocast)
+        with torch.no_grad():
+            if device.type == "cuda":
+                from torch.cuda.amp import autocast
+                with autocast():
+                    outputs = model(**inputs)
+            else:
+                outputs = model(**inputs)
+
+        pred = outputs.logits.argmax(dim=1).squeeze().detach().to("cpu").numpy()
+
+        # Resize predizione alla shape dell'immagine originale
+        pred = np.array(
+            Image.fromarray(pred.astype(np.uint8)).resize(img.size, resample=Image.NEAREST)
+        )
+
+        # Salva overlay in background per non bloccare la risposta
+        background_tasks.add_task(save_overlay, img, pred)
+
+        uniq, counts = np.unique(pred, return_counts=True)
+        print("Classi pixel predetti e conteggi:", dict(zip(uniq, counts)))
+
+        results = []
+        for class_id in uniq:
+            if class_id == 0:
+                continue
+            mask = (pred == class_id).astype(np.uint8)
+            n_pixels = int(mask.sum())
+            print(f"Classe {class_id} ({ID_TO_CLASS[class_id]['label']}): {n_pixels} pixel da segmentare")
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"  -> {len(contours)} poligoni trovati per classe {class_id}")
+            for cnt in contours:
+                if len(cnt) > 2:
+                    poly = cnt.squeeze().tolist()
+                    if isinstance(poly[0], int):
+                        poly = [poly]
+                    class_info = ID_TO_CLASS.get(int(class_id), {"label": str(class_id), "color": "#222"})
+                    results.append({
+                        "points": poly,
+                        "label": class_info["label"],
+                        "color": class_info["color"],
+                        "tipo": class_info["label"]
+                    })
+
+        print("Restituisco", len(results), "poligoni totali\n--- DEBUG FINE ---")
+        return {"poligoni": results}
+
+    except Exception as e:
+        print("ERRORE backtrace:", e)
+        return {"errore": str(e)}
+
+================================================================================
+================================================================================
+File: backend\armonizzazione_single_cabin\coord_optimizer.py
+Size: 8220 bytes
+SHA256: 1e5842b701cc947aa350fdf1341b2a9e43123e66a4544f0efeddc414b913708f
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\armonizzazione_single_cabin\coord_optimizer.py e la riga dopo cui inserire la modifica.
+
+#backend/armonizzazione_single_cabin/coord_optimizer.py
+from fastapi import HTTPException
+from pydantic import BaseModel
+from typing import Optional
+from shapely.geometry import Polygon
+import httpx
+import math
+import asyncio
+
+# pool HTTPX condiviso e timeout "prod"
+limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+timeout = httpx.Timeout(20.0)
+_ai_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+ # ---- Parametri configurabili
+MAX_ITER = 5
+CENTER_TOLERANCE_PX = 20
+MIN_DENSITY_IMPROVEMENT = 10
+AI_SEMAPHORE = asyncio.Semaphore(4)
+# ---- Modelli dati
+class CoordinateOptimizationRequest(BaseModel):
+    chk: str
+    zoom: Optional[float] = 18.0
+    crop_size: Optional[int] = 300
+    image: Optional[str] = None  # base64 invisibile catturata dal frontend
+    bearing: Optional[float] = 0.0
+    lat: Optional[float] = None  # opzionale: lat iniziale
+    lng: Optional[float] = None  # opzionale: lng iniziale
+
+class CoordinateOptimizationResponse(BaseModel):
+    new_lat: float
+    new_lng: float
+    iterations: int
+    final_distance_px: float
+    density_score: int
+    message: str
+
+# ---- Funzioni di supporto (Web Mercator pixel conversion locali crop) ----
+
+def latlng_to_local_crop_pixel(lat, lng, centerLat, centerLng, zoom, crop_size=300):
+    tile_size = 256
+    world_size = tile_size * (2 ** zoom)
+
+    def latlng_to_global_px(lat, lng):
+        x = (lng + 180.0) / 360.0 * world_size
+        sin_lat = math.sin(math.radians(lat))
+        y = (0.5 - math.log((1 + sin_lat) / (1 - sin_lat)) / (4 * math.pi)) * world_size
+        return x, y
+
+    center_x, center_y = latlng_to_global_px(centerLat, centerLng)
+    px, py = latlng_to_global_px(lat, lng)
+    dx = px - center_x
+    dy = py - center_y
+    local_px = crop_size / 2 + dx
+    local_py = crop_size / 2 + dy
+    return local_px, local_py
+
+def local_crop_pixel_to_latlng(px, py, centerLat, centerLng, zoom, crop_size=300):
+    tile_size = 256
+    world_size = tile_size * (2 ** zoom)
+
+    def latlng_to_global_px(lat, lng):
+        x = (lng + 180.0) / 360.0 * world_size
+        sin_lat = math.sin(math.radians(lat))
+        y = (0.5 - math.log((1 + sin_lat) / (1 - sin_lat)) / (4 * math.pi)) * world_size
+        return x, y
+
+    def global_px_to_latlng(x, y):
+        lng = x / world_size * 360.0 - 180.0
+        n = math.pi - 2.0 * math.pi * y / world_size
+        lat = math.degrees(math.atan(math.sinh(n)))
+        return lat, lng
+
+    center_x, center_y = latlng_to_global_px(centerLat, centerLng)
+    dx = px - (crop_size / 2)
+    dy = py - (crop_size / 2)
+    point_x = center_x + dx
+    point_y = center_y + dy
+    lat, lng = global_px_to_latlng(point_x, point_y)
+    return lat, lng
+
+def distance_to_crop_center(px, py, crop_size=300):
+    cx = crop_size / 2
+    cy = crop_size / 2
+    return math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+
+def rotate_px_about_center(x, y, angle_deg, crop_size=300):
+    cx = crop_size/2; cy = crop_size/2
+    dx = x - cx; dy = y - cy
+    rad = math.radians(angle_deg)
+    rx =  dx*math.cos(rad) - dy*math.sin(rad)
+    ry =  dx*math.sin(rad) + dy*math.cos(rad)
+    return cx+rx, cy+ry
+
+
+# ---- Funzione principale ----
+async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> CoordinateOptimizationResponse:
+    try:
+        print("\n=== Avvio ottimizzazione coordinata ===")
+        print(f"CHK: {req.chk}, Zoom: {req.zoom}, Crop: {req.crop_size}")
+        print(f"Lat iniziale: {req.lat}, Lng iniziale: {req.lng}")
+
+        # 1. Validazione immagine
+        if not req.image or len(req.image) < 50:
+            print("Immagine non valida (vuota o troppo corta)")
+            raise HTTPException(status_code=400, detail="Immagine base64 mancante o troppo corta")
+
+        # 2. Coordinate iniziali
+
+        if req.lat is not None and req.lng is not None:
+            lat, lng = req.lat, req.lng
+        else:
+            print("📡 Recupero coordinate iniziali dal backend...")
+            async with httpx.AsyncClient() as client:
+                res = await client.get(f"http://localhost:8000/cabina/{req.chk}")
+                if res.status_code != 200:
+                    raise HTTPException(status_code=404, detail="Cabina non trovata")
+                data = res.json()
+                lat, lng = data["lat"], data["lng"]
+        print(f"Coordinate iniziali: lat={lat}, lng={lng}")
+
+        zoom = req.zoom
+        crop_size = req.crop_size
+
+        MAX_ATTEMPTS = 2
+        attempt = 0
+        found = False
+        stalli_at = []
+        seg_data = None
+
+        # 3. Tentativi di chiamata a /segmenta_ai (max 2 tentativi)
+        while attempt < MAX_ATTEMPTS and not found:
+            print(f"Tentativo segmentazione AI n.{attempt + 1}")
+            payload = {
+                "image": req.image,
+                "lat": lat,
+                "lng": lng,
+                "zoom": zoom,
+                "crop_width": crop_size,
+                "crop_height": crop_size,
+            }
+            # limita concorrenza verso il microservizio AI e riusa la connessione
+            async with AI_SEMAPHORE:
+                seg_res = await _ai_client.post("http://localhost:9000/segmenta_ai", json=payload)
+
+            print(f"Risposta AI status: {seg_res.status_code}")
+            seg_data = seg_res.json()
+            poligoni = seg_data.get("poligoni", [])
+            print(f"Poligoni ricevuti: {len(poligoni)}")
+            stalli_at = [p for p in poligoni if p.get("label") == "Stalli AT" and len(p.get("points", [])) >= 3]
+            print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
+            if stalli_at:
+                found = True
+                break
+            attempt += 1
+
+        if not found:
+            print("Nessun poligono 'Stalli AT' trovato anche dopo 2 tentativi, ritorno coordinate originali")
+            return CoordinateOptimizationResponse(
+                new_lat=lat,
+                new_lng=lng,
+                iterations=attempt,
+                final_distance_px=0,
+                density_score=0,
+                message="Nessun poligono 'Stalli AT' trovato dopo 2 tentativi"
+            )
+
+        # 5. Trova il poligono più grande (per area)
+        shapely_stalli = [Polygon(p["points"]) for p in stalli_at]
+        aree = [poly.area for poly in shapely_stalli]
+        idx_max = aree.index(max(aree))
+        poligono_max = shapely_stalli[idx_max]
+        print(f"Selezionato poligono più grande, area: {poligono_max.area}")
+
+        # 6. Punto centrale robusto del poligono
+        centro = poligono_max.centroid
+        if not poligono_max.contains(centro) or centro.distance(poligono_max.boundary) < 3:
+            centro = poligono_max.representative_point()
+        print(f"Punto scelto (crop px, ruotati): x={centro.x}, y={centro.y}")
+
+        # 7. Deruota i pixel della crop prima della conversione
+        ux, uy = rotate_px_about_center(centro.x, centro.y, -(req.bearing or 0.0), crop_size)
+
+        # 8. Converti a lat/lng
+        centro_lat, centro_lng = local_crop_pixel_to_latlng(ux, uy, lat, lng, zoom, crop_size)
+        px, py = latlng_to_local_crop_pixel(centro_lat, centro_lng, lat, lng, zoom, crop_size)
+        dist = distance_to_crop_center(px, py, crop_size)
+        print(f"Punto scelto (crop px): x={centro.x}, y={centro.y}")
+
+        # 9. Densità pixel (numero di vertici del poligono)
+        density_prev = len(stalli_at[idx_max]["points"])
+        print(f"Density score: {density_prev}")
+
+        print("=== Ottimizzazione completata ===\n")
+        return CoordinateOptimizationResponse(
+            new_lat=centro_lat,
+            new_lng=centro_lng,
+            iterations=attempt + 1,
+            final_distance_px=dist,
+            density_score=density_prev,
+            message="Ottimizzazione basata sullo 'Stalli AT' più grande"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Errore durante ottimizzazione: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore durante ottimizzazione: {str(e)}")
+
+================================================================================
+================================================================================
+File: backend\armonizzazione_single_cabin\router.py
+Size: 2976 bytes
+SHA256: bd0efc0e85db2c271925c2dfddbc1e4eaa2b7f48cdd8def62cbebd8cb74d89d0
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: backend\armonizzazione_single_cabin\router.py e la riga dopo cui inserire la modifica.
+
+#backend/armonizzazione_single_cabin/router.py
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from db import SessionLocal
+from .coord_optimizer import CoordinateOptimizationRequest, ottimizza_coordinata
+
+router = APIRouter()
+
+@router.post("/update_centered_coord")
+async def update_centered_coord(req: CoordinateOptimizationRequest):
+    try:
+        print(f"[SERVER] Avvio ottimizzazione per cabina {req.chk}")
+
+        # 1. Alla PRIMA chiamata (iterazione 0): prendi SEMPRE coordinate da DB!
+        if req.lat is None or req.lng is None:  # OPPURE: controlla se c'è un flag 'first_iteration'
+            async with SessionLocal() as session:
+                res = await session.execute(
+                    text("SELECT ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng FROM public.cabine WHERE chk = :chk"),
+                    {"chk": req.chk}
+                )
+                row = res.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Cabina non trovata")
+                lat_db = row.lat
+                lng_db = row.lng
+        else:
+            lat_db = req.lat
+            lng_db = req.lng
+
+        # 2. Chiamata a ottimizza_coordinata con coordinate giuste
+        result = await ottimizza_coordinata(
+            CoordinateOptimizationRequest(
+                chk=req.chk,
+                zoom=req.zoom,
+                crop_size=req.crop_size,
+                image=req.image,
+                lat=lat_db,
+                lng=lng_db,
+                bearing=getattr(req, "bearing", 0.0)
+            )
+        )
+        ...
+
+        # Condizione di stop
+        done = result.final_distance_px < 20
+
+        if done:
+            print(f"[SERVER] Armonizzazione completata")
+            # Salvo nel DB solo alla fine
+            async with SessionLocal() as session:
+                await session.execute(
+                    text("""
+                        UPDATE public.cabine
+                        SET geom_centered = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)
+                        WHERE chk = :chk
+                    """),
+                    {"lat": result.new_lat, "lng": result.new_lng, "chk": req.chk}
+                )
+                await session.commit()
+
+        return {
+            "chk": req.chk,
+            "new_lat": result.new_lat,
+            "new_lng": result.new_lng,
+            "final_distance_px": result.final_distance_px,
+            "density_score": result.density_score,
+            "done": done,
+            "message": "Ottimizzazione completata" if done else "Step completato, continuare"
+        }
+
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Errore SQL: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore generico: {str(e)}")
+
+================================================================================
+
+### Sezione: frontend/src (solo App.js)
+
+================================================================================
+File: frontend\src\App.js
+Size: 48283 bytes
+SHA256: 42a58491704aa75ecf7bd3047433599a66653b566c5d5b35fbc3b9b1cba76f78
+
+# ISTRUZIONI OPERATIVE
+# Quando proponi modifiche:
+#  - restituisci codice pronto per copia/incolla;
+#  - indica sempre questo file: frontend\src\App.js e la riga dopo cui inserire la modifica.
+
+// App.js
+
+import React, { useState, useRef, useEffect } from "react";
+import { MapContainer, TileLayer, useMap, Polygon, Tooltip, Marker, Popup, Pane } from "react-leaflet";
+import BatchConsole from "./batch/BatchConsole";
+import { useBatchRunner } from "./batch/useBatchRunner";
+import "leaflet/dist/leaflet.css";
+import "./App.css";
+import MarkerClusterGroup from 'react-leaflet-markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import html2canvas from 'html2canvas';
+import L from "leaflet";
+import "leaflet-rotate";
+import { useMapEvents } from "react-leaflet";
+import { convertPolygonData } from './utils/geo.js';
+const DRAW_POLYGONS_DURING_BATCH = true; // <--- toggle globale
+
+const TIPO_OPTIONS = ["e-distribuzione", "CSAT", "Altri", "Convertito"];
+const tipoFromRow = (row) => {
+  const raw = row?.tipo_cabina;
+  if (raw === null || raw === undefined || raw === "") return "e-distribuzione";
+  return String(raw);
+};
+
+const CLEAN = (v) => (v === null || v === undefined || v === "" ? "[null]" : String(v));
+
+// --- HELPERS PER CAPTURE ----------------------------------------------------
+async function waitForMapToSettle(map) {
+  if (!map) return;
+
+  // aspetta fine animazioni pan/zoom
+  await new Promise((res) => {
+    const idle = !map._animatingZoom && !map._panAnim;
+    if (idle) return res();
+    const once = () => { map.off('moveend', once); map.off('zoomend', once); res(); };
+    map.on('moveend', once);
+    map.on('zoomend', once);
+  });
+
+  // aspetta che i TileLayer abbiano caricato le tile correnti
+  const layers = [];
+  map.eachLayer((l) => { if (l instanceof L.TileLayer) layers.push(l); });
+  await Promise.all(
+    layers.map((l) => new Promise((res) => {
+      // se non sta caricando, via subito
+      if (!l._loading) return res();
+      const onLoad = () => { l.off('load', onLoad); res(); };
+      l.on('load', onLoad);
+    }))
+  );
+
+  // due frame per sicurezza (paint completo)
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+function toggleCaptureUiHidden(hide) {
+  document.querySelectorAll('.capture-hide').forEach((el) => {
+    if (hide) {
+      el.setAttribute('data-prev-visibility', el.style.visibility || '');
+      el.style.visibility = 'hidden';
+    } else {
+      el.style.visibility = el.getAttribute('data-prev-visibility') || '';
+      el.removeAttribute('data-prev-visibility');
+    }
+  });
+}
+
+function uniqueSorted(arr) {
+  return Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
+}
+
+// -- ICON
+const blueIcon = new L.Icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
+
+function CenterTracker({ setCenterCoords }) {
+  const map = useMapEvents({
+    move: () => {
+      const c = map.getCenter();
+      setCenterCoords([c.lat.toFixed(6), c.lng.toFixed(6)]);
+    },
+  });
+
+  useEffect(() => {
+    const c = map.getCenter();
+    setCenterCoords([c.lat.toFixed(6), c.lng.toFixed(6)]);
+  }, [map, setCenterCoords]);
+
+  return null;
+}
+
+function ZoomTracker({ setZoomLevel }) {
+  const map = useMap();
+  useEffect(() => {
+      const updateZoom = () => setZoomLevel(map.getZoom());
+      map.on("zoom", updateZoom);
+      map.on("zoomend", updateZoom);
+      updateZoom(); // inizializza subito
+      return () => {
+        map.off("zoom", updateZoom);
+        map.off("zoomend", updateZoom);
+      };
+    }, [map, setZoomLevel]);
+  return null;
+}
+
+function BoundsTracker({ setMapBounds }) {
+  const map = useMap();
+  useEffect(() => {
+    const update = () => setMapBounds(map.getBounds());
+    update(); // iniziale
+    map.on('moveend zoomend', update);
+    return () => {
+      map.off('moveend zoomend', update);
+    };
+  }, [map, setMapBounds]);
+  return null;
+}
+
+
+// -- SIDEBAR CONTROLS
+function MapControls({
+  lat, setLat, lng, setLng, idCabina, setIdCabina,
+  setCoords, setPolygonData, setCaptureMode, capturedImage, setCapturedImage,
+  setArmonizedMarker, analizzaCabina, isAnalisiLoading, centerCoords,
+  captureParams, armonizzaCabinaAuto, mapRef, setPendingFlyTo, setZoomLevel,
+  // filtri
+  optionsTipoCabina, optionsAreaRegionale, optionsRegione, optionsProvSuggerite,
+  filtroTipoCabina, setFiltroTipoCabina, filtroArea, setFiltroArea,
+  filtroRegione, setFiltroRegione, filtroProvincia, setFiltroProvincia,
+  soloInVista, setSoloInVista, conteggioFiltrate,
+  selectedFromMarker, setSelectedFromMarker,
+  runBatchSelection,                                    // <--- nuovo
+}) {
+  const [error, setError] = useState("");
+  const [uiMsg, setUiMsg] = useState("");
+  function resetAllFieldsIfLocked() {
+  // Se almeno un campo è oscurato/bloccato, svuota tutto
+  if (idCabina !== "" || lat !== "" || lng !== "") {
+        setLat("");
+        setLng("");
+        setIdCabina("");
+      }
+    }
+  const isCoordMode = lat !== "" || lng !== "";
+  const isCabinaMode = idCabina !== "";
+
+  const handleSubmit = async () => {
+      setError("");
+
+      if (!lat && !lng && !idCabina) {
+        setError("Inserisci coordinate o codice cabina oppure clicca un marker.");
+        return;
+      }
+
+      if (lat || lng) {
+        const latNum = parseFloat(lat);
+        const lngNum = parseFloat(lng);
+        if (isNaN(latNum) || isNaN(lngNum)) {
+          setError("Latitudine o longitudine non valida.");
+          return;
+        }
+        setPendingFlyTo({ coords: [latNum, lngNum], zoom: 18 });
+        setPolygonData(null);
+        return;
+      }
+
+      try {
+        const res = await fetch(`http://localhost:8000/cabina/${idCabina}`);
+        const data = await res.json();
+        if (data.lat && data.lng) {
+          setPendingFlyTo({ coords: [data.lat, data.lng], zoom: 18 });
+          setLat(data.lat.toString());
+          setLng(data.lng.toString());
+          setPolygonData(null);
+        } else {
+          setError("Cabina non trovata.");
+        }
+      } catch (err) {
+        console.error("Errore API:", err);
+        setError("Errore nella comunicazione con il server.");
+      }
+    };
+
+      // PULISCI = azzera TUTTO (tipi, area, regione, provincia) + campi puntuali
+    const handlePulisci = () => {
+      setFiltroTipoCabina(new Set());
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+
+      // pulisco anche i campi puntuali
+      setLat("");
+      setLng("");
+      setIdCabina("");
+      setSelectedFromMarker(false);
+      setUiMsg("");
+    };
+
+    // RESET FILTRI = NON tocca i tipi; azzera solo area/regione/provincia + campi puntuali
+    const handleResetFiltri = () => {
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+
+      // pulisco anche i campi puntuali
+      setLat("");
+      setLng("");
+      setIdCabina("");
+
+      setSelectedFromMarker(false);
+      setUiMsg("");
+    };
+
+
+  return (
+    <div className="sidebar">
+      <h2>Dashboard</h2>
+
+              {/* === FILTRI MARKER === */}
+        <div style={{margin: '12px 0', padding: 10, border: '1px solid #ddd', borderRadius: 8, background: '#fafafa'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8}}>
+            <strong>Filtri marker</strong>
+            <span style={{fontSize:12, opacity:0.8}}>in vista: {conteggioFiltrate}</span>
+          </div>
+
+          {/* Solo in vista */}
+          <label style={{display:'flex', gap:8, alignItems:'center', marginBottom:10}}>
+            <input
+              type="checkbox"
+              checked={!!soloInVista}
+              onChange={e => setSoloInVista(e.target.checked)}
+            />
+            Mostra solo cabine nell’area visibile
+          </label>
+
+          {/* Tipo cabina (checkbox multiple) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Tipo cabina</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:6}}>
+              {optionsTipoCabina.map(opt => (
+                <label key={opt} style={{display:'flex', alignItems:'center', gap:6}}>
+                  <input
+                    type="checkbox"
+                    checked={filtroTipoCabina.has(opt)}
+                    onChange={(e) => {
+                      const next = new Set([...filtroTipoCabina]);
+                      if (e.target.checked) next.add(opt);
+                      else next.delete(opt);
+                      setFiltroTipoCabina(next);
+                    }}
+                  />
+                  <span>{opt}</span>
+                </label>
+              ))}
+            </div>
+            <div style={{marginTop:6}}>
+              <button
+                type="button"
+                onClick={() => setFiltroTipoCabina(new Set(optionsTipoCabina))}
+                style={{marginRight:8}}
+              >
+                Seleziona tutti
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePulisci}
+              >
+                Pulisci
+              </button>
+            </div>
+        </div>
+
+          {/* Area regionale (select) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Area regionale</div>
+            <select
+              value={filtroArea}
+              onChange={e => {
+                setFiltroArea(e.target.value);
+                // reset dipendenti
+                setFiltroRegione("");
+                setFiltroProvincia("");
+              }}
+              style={{width:'100%'}}
+            >
+              <option value="">(tutte)</option>
+              {optionsAreaRegionale.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Regione (select dipendente da Area) */}
+          <div style={{marginBottom: 10}}>
+            <div style={{fontSize:12, marginBottom:6}}>Regione</div>
+            <select
+              value={filtroRegione}
+              onChange={e => {
+                setFiltroRegione(e.target.value);
+                setFiltroProvincia("");
+              }}
+              style={{width:'100%'}}
+              disabled={(!filtroArea) || optionsRegione.length === 0}
+            >
+              <option value="">(tutte)</option>
+              {optionsRegione.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provincia (input 2 lettere con suggerimenti) */}
+          <div style={{marginBottom: 4}}>
+            <div style={{fontSize:12, marginBottom:6}}>Provincia (2 lettere)</div>
+            <input
+              value={filtroProvincia}
+              onChange={e => setFiltroProvincia(e.target.value.toUpperCase().slice(0, 2))}
+              list="prov-suggestions"
+              placeholder="es. RM"
+              style={{width:'100%'}}
+            />
+            <datalist id="prov-suggestions">
+              {optionsProvSuggerite.map(p => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+              {filtroProvincia.length === 2 && optionsProvSuggerite.length === 0 && (
+              <div style={{ marginTop: 4, fontSize: 12, color: '#b91c1c' }}>
+                Provincia non presente
+              </div>
+            )}
+          </div>
+
+          <div style={{display:'flex', gap:8, marginTop:8}}>
+            <button type="button" onClick={handleResetFiltri}>
+                Reset filtri
+            </button>
+            </div>
+        </div>
+
+      <style>{`
+          input[disabled] {
+            pointer-events: none;
+          }
+        `}</style>
+
+        <div style={{ width: "100%", marginBottom: 8 }}>
+          <span
+            onClick={() => {
+              if (idCabina !== "" || lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+                setSelectedFromMarker(false);
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Latitudine:</label>
+            <input
+              value={lat}
+              onChange={e => { setLat(e.target.value); setSelectedFromMarker(false); }}
+              disabled={idCabina !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+          <span
+            onClick={() => {
+              if (idCabina !== "" || lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+                setSelectedFromMarker(false);
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Longitudine:</label>
+            <input
+              value={lng}
+              onChange={e => { setLng(e.target.value); setSelectedFromMarker(false); }}
+              disabled={idCabina !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+          <span
+            onClick={() => {
+              if (lat !== "" || lng !== "") {
+                setLat("");
+                setLng("");
+                setIdCabina("");
+                setSelectedFromMarker(false);
+              }
+            }}
+            style={{ display: 'block', width: "100%", marginBottom: 4, cursor: 'pointer' }}
+          >
+            <label>Codice cabina:</label>
+            <input
+              value={idCabina}
+              onChange={e => { setIdCabina(e.target.value); setSelectedFromMarker(false); }}
+              disabled={lat !== "" || lng !== ""}
+              style={{ width: "95%" }}
+            />
+          </span>
+        </div>
+
+        <button onClick={handleSubmit} style={{ width: '100%', marginBottom: 12 }}>Vai</button>
+        {/* === Estrazione aggregata === */}
+        <div style={{margin:'12px 0', padding:10, border:'1px solid #ddd', borderRadius:8, background:'#fafafa'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <strong>Estrazione aggregata</strong>
+            <span style={{fontSize:12, opacity:0.8}}>in vista: {conteggioFiltrate}</span>
+          </div>
+
+          <button
+            onClick={() => {
+              if (!conteggioFiltrate) return;
+              const ok = window.confirm(
+                `Confermi l’estrazione per la selezione aggregata corrente?\nCabine in vista: ${conteggioFiltrate}.`
+              );
+              if (!ok) return;
+              runBatchSelection();
+            }}
+            disabled={!conteggioFiltrate}
+            style={{
+              width:'100%',
+              background:'#111827', color:'#fff',
+              border:'none', borderRadius:6, padding:8,
+              cursor: conteggioFiltrate ? 'pointer' : 'not-allowed',
+              opacity: conteggioFiltrate ? 1 : 0.5
+            }}
+          >
+            Analizza selezione (batch)
+          </button>
+
+          <div style={{marginTop:6, fontSize:12, color:'#6b7280'}}>
+            Avvia la segmentazione su tutte le cabine attualmente selezionate e genera l’Excel con le aree.
+          </div>
+        </div>
+
+      {error && <div style={{ color: "red", marginTop: "10px" }}>{error}</div>}
+      <hr />
+      <button
+          onClick={() => {
+            if (!selectedFromMarker) { setUiMsg("Selezionare una cabina"); return; }
+            setUiMsg("");
+            setCaptureMode(true);
+          }}
+          disabled={!selectedFromMarker}
+          style={{ marginTop: '10px', width: '100%', opacity: selectedFromMarker ? 1 : 0.5, cursor: selectedFromMarker ? 'pointer' : 'not-allowed' }}
+        >
+          📸 Scatta Foto
+      </button>
+        <button
+              onClick={() => {
+                if (!selectedFromMarker) { setUiMsg("Selezionare una cabina"); return; }
+                setUiMsg("");
+                armonizzaCabinaAuto();
+              }}
+              disabled={!selectedFromMarker}
+              style={{
+                marginTop: '10px',
+                width: '100%',
+                background: '#10b981',
+                color: '#fff',
+                fontWeight: 'bold',
+                border: 'none',
+                borderRadius: 5,
+                padding: 8,
+                opacity: selectedFromMarker ? 1 : 0.5,
+                cursor: selectedFromMarker ? 'pointer' : 'not-allowed'
+              }}
+            >
+              📍 Armonizza Cabina
+        </button>
+        {!capturedImage && uiMsg && (
+          <div style={{ color: '#b91c1c', marginTop: 8 }}>
+            {uiMsg}
+          </div>
+        )}
+
+      {capturedImage && (
+          <div style={{
+            marginTop: '20px',
+            padding: '10px',
+            backgroundColor: '#f5f5f5',
+            border: '1px solid #ccc',
+            borderRadius: '4px',
+            fontFamily: 'sans-serif'
+          }}>
+            <h3 style={{ marginTop: 0 }}>Immagine scattata</h3>
+            <img
+              src={capturedImage}
+              alt="Cattura"
+              style={{
+                width: '100%',
+                borderRadius: '4px',
+                border: '1px solid #999'
+              }}
+            />
+          </div>
+        )}
+        {capturedImage && (
+    <>
+      <button
+          style={{
+            marginTop: 10,
+            width: '100%',
+            background: '#0070f3',
+            color: '#fff',
+            fontWeight: 'bold',
+            border: 'none',
+            borderRadius: 5,
+            padding: 8
+          }}
+          onClick={analizzaCabina}
+          disabled={isAnalisiLoading || !capturedImage || !captureParams}
+        >
+          {isAnalisiLoading ? "Analisi in corso..." : "Analizza Cabina"}
+        </button>
+      <button
+        style={{
+          marginTop: 14,
+          width: '100%',
+          background: '#ef4444',
+          color: '#fff',
+          fontWeight: 'bold',
+          border: 'none',
+          borderRadius: 5,
+          padding: 10,
+          fontSize: 18,
+          cursor: 'pointer'
+        }}
+        onClick={() => {
+          setPolygonData(null);
+          setLat("");
+          setLng("");
+          setIdCabina("");
+          setCapturedImage(null);
+          setSelectedFromMarker(false);
+          setUiMsg("");
+        }}
+      >
+        ❌ Annulla analisi Immagine
+      </button>
+    </>
+  )}
+
+    </div>
+  );
+}
+
+function rotatePolygonCoords(points, map, angleDeg) {
+    if (!Array.isArray(points) || !points.length) return points;
+
+    const center = map.getCenter();
+    const angleRad = (angleDeg * Math.PI) / 180;
+
+    return points.map(([lat, lng]) => {
+        const projected = map.project([lat, lng], map.getZoom());
+        const centerProjected = map.project(center, map.getZoom());
+
+        const dx = projected.x - centerProjected.x;
+        const dy = projected.y - centerProjected.y;
+
+        const rotatedX = dx * Math.cos(angleRad) - dy * Math.sin(angleRad);
+        const rotatedY = dx * Math.sin(angleRad) + dy * Math.cos(angleRad);
+
+        return [centerProjected.x + rotatedX, centerProjected.y + rotatedY];
+    });
+}
+
+
+function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMarkers, armonizedMarker, setZoomLevel, setLat, setLng, setIdCabina, lat, lng, idCabina, setMapBounds, filtroArea, fetchSeq, setSelectedFromMarker }) {
+
+    console.log("MapView polygonData:", polygonData);
+  return (
+    <MapContainer
+        center={coords} // oppure la tua posizione iniziale
+        rotate={true}
+        touchRotate={true}
+        zoom={6}
+        zoomSnap={0.1}
+        zoomDelta={0.1}
+        wheelPxPerZoomLevel={80}
+        className="rotatable-map"
+        style={{ height: "100vh", width: "100%" }}
+        whenReady={(mapInstance) => {
+          mapRef.current = mapInstance.target;
+          setZoomLevel(mapInstance.target.getZoom()); // <- aggiungi questa riga
+      }}
+    >
+        <Pane name="underlay" style={{ zIndex: 390 }} />
+        <Pane name="overlay"  style={{ zIndex: 410 }} />
+       <CenterTracker setCenterCoords={setCenterCoords} />
+        <ZoomTracker setZoomLevel={setZoomLevel} />
+        <BoundsTracker setMapBounds={setMapBounds} />
+      <TileLayer
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        crossOrigin="anonymous"
+        attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
+        maxZoom={22}
+      />
+
+      {!hideMarkers && (
+        <MarkerClusterGroup key={`${filtroArea || 'ALL'}|${fetchSeq}`}>
+          {cabine.map((cab, idx) => (
+            <Marker
+              key={cab.chk || `${cab.lat},${cab.lng}`}
+              position={[cab.lat, cab.lng]}
+              icon={blueIcon}
+              eventHandlers={{
+                  click: () => {
+                    setLat(cab.lat.toString());
+                    setLng(cab.lng.toString());
+                    setIdCabina(cab.chk);
+                    setSelectedFromMarker(true);
+                  }
+                }}
+            >
+              <Popup>
+                <strong>{cab.denom}</strong><br />
+                CHK: {cab.chk}<br />
+                Lat: {cab.lat.toFixed(6)}<br />
+                Lng: {cab.lng.toFixed(6)}
+              </Popup>
+            </Marker>
+          ))}
+        </MarkerClusterGroup>
+      )}
+        {/* Marker verde per nuova coordinata armonizzata */}
+        {!hideMarkers && armonizedMarker && (
+              <Marker
+                position={[armonizedMarker.lat, armonizedMarker.lng]}
+                icon={new L.Icon({
+                  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
+                  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                  popupAnchor: [1, -34],
+                  shadowSize: [41, 41],
+                })}
+                eventHandlers={{
+                  click: () => {
+                    setLat(armonizedMarker.lat.toString());
+                    setLng(armonizedMarker.lng.toString());
+                    setIdCabina(armonizedMarker.chk);
+                    setSelectedFromMarker(true);
+                  }
+                }}
+              >
+                <Popup>
+                  <strong>Nuova posizione armonizzata</strong><br />
+                  CHK: {armonizedMarker.chk}<br />
+                  Lat: {armonizedMarker.lat.toFixed(6)}<br />
+                  Lng: {armonizedMarker.lng.toFixed(6)}
+                </Popup>
+              </Marker>
+            )}
+       {polygonData && (() => {
+          // ordina per area crescente → piccoli sopra
+          const sortedPolys = [...polygonData].sort((a, b) => {
+            const amq = Number.isFinite(a.mq) ? a.mq : Number.MAX_VALUE;
+            const bmq = Number.isFinite(b.mq) ? b.mq : Number.MAX_VALUE;
+            return amq - bmq;
+          });
+          return sortedPolys.map((poly, i) => (
+            <Polygon
+              key={i}
+              positions={poly.points}
+              color={poly.color}           // usa il colore originale
+              fillColor={poly.color}       // idem
+              fillOpacity={poly.mq > 5000 ? 0.2 : 0.45} // grandi più trasparenti
+              weight={2}
+              eventHandlers={{
+                mouseover: (e) => e.target.bringToFront(),
+              }}
+            >
+              <Tooltip sticky direction="top">
+                <span style={{ fontWeight: 600 }}>{poly.label}</span>
+                {Number.isFinite(poly.mq) ? (<><br />{poly.mq} mq</>) : null}
+              </Tooltip>
+            </Polygon>
+          ));
+        })()}
+            </MapContainer>
+  );
+}
+
+function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords }) {
+  const overlayRef = useRef(null);
+
+  const handleShot = async () => {
+  if (!overlayRef.current) return;
+  const leafletElement = document.querySelector('.leaflet-container');
+
+  const originalTransform = leafletElement.parentElement.style.transform;
+  try {
+    // nascondi overlay e UI
+    overlayRef.current.style.display = 'none';
+    setHideMarkers(true);
+    toggleCaptureUiHidden(true);
+    leafletElement.parentElement.style.transform = "none";
+
+    await new Promise(r => requestAnimationFrame(r));
+    await Promise.race([
+      waitForMapToSettle(mapRef.current),
+      new Promise(res => setTimeout(res, 1500))
+    ]);
+
+    const fullCanvas = await html2canvas(leafletElement, {
+      useCORS: true,
+      backgroundColor: null,
+      allowTaint: true,
+      logging: false,
+      scale: 1,
+    });
+
+    const cropSize = 500;
+    const rect = leafletElement.getBoundingClientRect();
+    const scaleFactor = fullCanvas.width / rect.width;
+    const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+    const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+
+    const cropped = document.createElement('canvas');
+    cropped.width = cropSize;
+    cropped.height = cropSize;
+    const ctx = cropped.getContext('2d');
+    ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+
+    const dataUrl = cropped.toDataURL();
+    const zoom = mapRef.current?.getZoom() ?? 19;
+    const center = centerCoords || [0, 0];
+
+    onConfirm(dataUrl, {
+      crop_width: cropSize,
+      crop_height: cropSize,
+      zoom,
+      zoomRef: zoom,
+      centerLat: center[0],
+      centerLng: center[1],
+      bearing: mapRef.current?.getBearing?.() ?? 0
+    });
+  } finally {
+    leafletElement.parentElement.style.transform = originalTransform;
+    toggleCaptureUiHidden(false);
+    if (overlayRef.current) overlayRef.current.style.display = 'block';
+    setHideMarkers(false);
+  }
+};
+
+
+  return (
+    <div
+      ref={overlayRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 999,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+        pointerEvents: 'none'
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          width: 500,
+          height: 500,
+          transform: 'translate(-50%, -50%)',
+          boxSizing: 'border-box',
+          border: '3px solid #16a34a',
+          background: 'rgba(22,163,74,0.06)',
+          pointerEvents: 'none'
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '65%',
+          transform: 'translate(-50%, 0)',
+          zIndex: 2000,
+          background: 'rgba(255,255,255,0.95)',
+          padding: '28px 20px 16px 20px',
+          borderRadius: 12,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.15)',
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          flexDirection: 'column',
+          minWidth: 260,
+          pointerEvents: 'auto'
+        }}
+      >
+        <button
+          onClick={handleShot}
+          style={{
+            background: '#16a34a',
+            color: '#fff',
+            fontWeight: 700,
+            fontSize: 18,
+            padding: '10px 28px',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer'
+          }}
+        >
+          ✅ Scatta
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            background: '#f87171',
+            color: '#fff',
+            fontWeight: 700,
+            fontSize: 16,
+            padding: '8px 20px',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer'
+          }}
+        >
+          ❌ Annulla
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function App() {
+  // --- TUTTI GLI STATE DEI CAMPI IN APP
+  const [selectedFromMarker, setSelectedFromMarker] = useState(false);
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [idCabina, setIdCabina] = useState("");
+  const [coords, setCoords] = useState([41.9028, 12.4964]);
+  const [centerCoords, setCenterCoords] = useState([0, 0]); // Roma
+  const [zoomLevel, setZoomLevel] = useState(6);  // Zoom iniziale
+  const [polygonData, setPolygonData] = useState(null);
+  const [cabine, setCabine] = useState([]);
+  const [armonizedMarker, setArmonizedMarker] = useState(null);
+  // const [autoZoom, setAutoZoom] = useState(false);
+  const [captureMode, setCaptureMode] = useState(false);
+  const [capturedImage, setCapturedImage] = useState(null);
+  const [captureParams, setCaptureParams] = useState(null);
+  const [isAnalisiLoading, setIsAnalisiLoading] = useState(false);
+  const [pendingFlyTo, setPendingFlyTo] = useState(null); // [coords, zoom]
+  const mapRef = useRef(null);
+  const fetchSeqRef = useRef(0);
+  const [rotation, setRotation] = useState(0);
+  const [hideMarkers, setHideMarkers] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState([]);
+  const [consoleProgress, setConsoleProgress] = useState(0);
+  const [consoleStatus, setConsoleStatus] = useState("");
+  const batch = useBatchRunner({
+      mapRef,
+      setCoords,
+      setHideMarkers,
+      setArmonizedMarker,
+      getCenterCoords: () => centerCoords,
+      setPolygonData,                               // <--- nuovo
+      drawPolygons: DRAW_POLYGONS_DURING_BATCH,     // <--- nuovo
+    });
+
+
+  useEffect(() => {
+      if (mapRef.current) {
+          mapRef.current.setBearing(rotation);
+      }
+  }, [rotation]);
+
+  // === FILTRI ===
+  const [mapBounds, setMapBounds] = useState(null);
+  const [soloInVista, setSoloInVista] = useState(true);
+  const [filtroTipoCabina, setFiltroTipoCabina] = useState(new Set(["e-distribuzione"]));
+  const [filtroArea, setFiltroArea] = useState("");
+  const [filtroRegione, setFiltroRegione] = useState("");
+  const [filtroProvincia, setFiltroProvincia] = useState("");
+
+  // Opzioni lato UI prese dal backend in base ai filtri selezionati
+
+    const [optionsTipoCabina] = useState(TIPO_OPTIONS);
+    const [optionsAreaRegionale, setOptionsAreaRegionale] = useState([]);
+    const [optionsRegione, setOptionsRegione] = useState([]);
+    const [optionsProvSuggerite, setOptionsProvSuggerite] = useState([]);
+
+    // 1) Popola Aree in base ai TIPI selezionati
+    // Carica cabine dal backend in base ai filtri (server-side filtering)
+    // CHANGE: fetch cabine con abort, debounce, anti-race e no-cache
+    // Carica SOLO per Area (semplice, niente altri parametri)
+    // Carica cabine in base alla selezione progressiva
+    // Reset gerarchico filtri
+    useEffect(() => {
+      setFiltroArea("");
+      setFiltroRegione("");
+      setFiltroProvincia("");
+    }, [filtroTipoCabina]);
+
+    useEffect(() => {
+      setFiltroRegione("");
+      setFiltroProvincia("");
+    }, [filtroArea]);
+
+    useEffect(() => {
+      setFiltroProvincia("");
+    }, [filtroRegione]);
+
+
+    // Carica cabine in base alla selezione progressiva (area opzionale)
+    // Carica cabine in base alla selezione progressiva
+    useEffect(() => {
+      const controller = new AbortController();
+      const mySeq = ++fetchSeqRef.current;
+
+      // Nessun tipo selezionato → svuota e stop
+      if (filtroTipoCabina.size === 0) {
+        setCabine([]);
+        return;
+      }
+
+      setCabine([]); // pulizia immediata
+
+      const url = new URL("http://localhost:8000/cabine");
+      [...filtroTipoCabina].forEach(t => url.searchParams.append("tipo", t));
+      if (filtroArea) url.searchParams.set("area_regionale", filtroArea);
+      if (filtroRegione) url.searchParams.set("regione", filtroRegione);
+      if (filtroProvincia && filtroProvincia.trim().length === 2) {
+        url.searchParams.set("provincia", filtroProvincia.trim().toUpperCase());
+      }
+
+      fetch(url.toString(), { signal: controller.signal, cache: "no-store" })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
+        .then(data => {
+          if (mySeq !== fetchSeqRef.current) return;
+          const rows = Array.isArray(data.data) ? data.data : [];
+          const norm = rows.map(c => ({ ...c, lat: +c.lat, lng: +c.lng }))
+                           .filter(c => Number.isFinite(c.lat) && Number.isFinite(c.lng));
+          setCabine(norm);
+        })
+        .catch(err => {
+          if (err.name === "AbortError") return;
+          if (mySeq !== fetchSeqRef.current) return;
+          console.warn("fetch cabine", err);
+          setCabine([]);
+        });
+
+      return () => controller.abort();
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // --- CARICA AREE in base ai TIPI selezionati
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsAreaRegionale([]);
+        setFiltroArea("");
+        return;
+      }
+      const controller = new AbortController();
+      const params = new URLSearchParams();
+      [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+
+      fetch(`http://localhost:8000/filters/area_regionale?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store" // ADD
+        })
+        .then(r => r.json())
+        .then(data => {
+          const opts = data.options || [];
+          setOptionsAreaRegionale(opts);
+          if (filtroArea && !opts.includes(filtroArea)) setFiltroArea("");
+        })
+        .catch(() => {});
+      return () => controller.abort();
+    }, [filtroTipoCabina]);
+
+    // --- CARICA REGIONI in base a TIPI + AREA
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsRegione([]);
+        setFiltroRegione("");
+        return;
+      }
+      const controller = new AbortController();
+      const params = new URLSearchParams();
+      [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+      if (filtroArea) params.set("area_regionale", filtroArea);  // <-- CORRETTO
+
+      fetch(`http://localhost:8000/filters/regione?${params.toString()}`, {
+      signal: controller.signal,
+      cache: "no-store" // ADD
+    })
+        .then(r => r.json())
+        .then(data => {
+          const opts = data.options || [];
+          setOptionsRegione(opts);
+          if (filtroRegione && !opts.includes(filtroRegione)) setFiltroRegione("");
+        })
+        .catch(() => {});
+      return () => controller.abort();
+    }, [filtroTipoCabina, filtroArea]);
+
+    // --- SUGGERIMENTI PROVINCE in base a TIPI + AREA + REGIONE + prefisso
+    useEffect(() => {
+      if (filtroTipoCabina.size === 0) {
+        setOptionsProvSuggerite([]);
+        return;
+      }
+      const controller = new AbortController();
+      const t = setTimeout(() => {
+        const params = new URLSearchParams();
+        [...filtroTipoCabina].forEach(t => params.append("tipo", t));
+        if (filtroArea) params.set("area_regionale", filtroArea); // <-- CORRETTO
+        if (filtroRegione) params.set("regione", filtroRegione);
+        if (filtroProvincia) params.set("q", filtroProvincia);
+
+        fetch(`http://localhost:8000/filters/provincia?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store" // ADD
+        })
+          .then(r => r.json())
+          .then(data => setOptionsProvSuggerite(data.options || []))
+          .catch(() => {});
+      }, 200);
+      return () => { controller.abort(); clearTimeout(t); };
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // Svuota i campi puntuali quando cambiano i filtri
+    useEffect(() => {
+      setLat("");
+      setLng("");
+      setIdCabina("");
+      setSelectedFromMarker(false);
+    }, [filtroTipoCabina, filtroArea, filtroRegione, filtroProvincia]);
+
+    // Filtraggio cabine
+    const cabineFiltrate = React.useMemo(() => {
+          if (soloInVista && mapBounds) {
+            return cabine.filter(c => {
+              try { return mapBounds.contains(L.latLng(c.lat, c.lng)); }
+              catch { return true; }
+            });
+          }
+          return cabine;
+        }, [cabine, soloInVista, mapBounds]);
+    const conteggioFiltrate = cabineFiltrate.length;
+
+    // Avvia il batch sulla selezione corrente (cabineFiltrate) aprendo la console
+    const runBatchSelection = React.useCallback(() => {
+      setConsoleOpen(true);
+      batch.runBatch(cabineFiltrate, {
+        setLogs: setConsoleLogs,
+        setProgress: setConsoleProgress,
+        setStatus: setConsoleStatus,
+        setOpen: setConsoleOpen
+      });
+    }, [batch, cabineFiltrate, setConsoleOpen, setConsoleLogs, setConsoleProgress, setConsoleStatus]);
+
+  useEffect(() => {
+  if (mapRef.current && pendingFlyTo) {
+    const { coords, zoom } = pendingFlyTo;
+    mapRef.current.flyTo(coords, zoom, { animate: true, duration: 1.5 });
+    setCoords(coords);
+    setZoomLevel(zoom);
+    setPendingFlyTo(null);
+  }
+}, [pendingFlyTo]);
+  // Funzione ANALISI
+ async function analizzaCabina() {
+  setIsAnalisiLoading(true);
+
+  if (!capturedImage) {
+    alert("Devi prima scattare una foto!");
+    setIsAnalisiLoading(false);
+    return;
+  }
+
+  try {
+    const reqLat = parseFloat(centerCoords[0]);
+    const reqLng = parseFloat(centerCoords[1]);
+
+    // Sposta la mappa e abilita lo zoom
+    setCoords([reqLat, reqLng]);
+    // setAutoZoom(false);
+
+    // Chiamata al backend AI
+    const res2 = await fetch('http://localhost:8000/segmenta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: capturedImage,
+        lat: reqLat,
+        lng: reqLng,
+        crop_width: captureParams?.crop_width,
+        crop_height: captureParams?.crop_height,
+        zoom: captureParams?.zoom
+      }),
+    });
+
+    const data2 = await res2.json();
+    console.log("Risposta completa dal backend:", data2);
+
+    /*const poligoniRuotati = data2.poligoni.map(data => {
+        return {
+            ...data,
+            points: rotatePolygonCoords(data.points, mapRef.current, rotation)
+        }
+    })
+    const poligoniFromBackend = rotation !== 0 ? poligoniRuotati : data2.poligoni;*/
+    const poligoniFromBackend = data2.poligoni;
+
+    if (!poligoniFromBackend) {
+      alert("Errore backend AI: " + (data2.detail || "Risposta non valida!"));
+      setIsAnalisiLoading(false);
+      return;
+    }
+    const converted = convertPolygonData(poligoniFromBackend, captureParams);
+    // Aspetta che la mappa abbia finito di centrarsi
+    const map = mapRef.current;
+    setPolygonData(converted); // fallback
+
+    console.log("Poligoni convertito:", converted);
+
+  } catch (e) {
+    console.error("Errore durante l’analisi:", e);
+    alert('Errore nell’analisi!');
+  }
+
+  setIsAnalisiLoading(false);
+}
+
+ async function armonizzaCabinaAuto() {
+  if (!idCabina) { alert("Seleziona prima una cabina"); return; }
+
+  let currentLat = parseFloat(lat);
+  let currentLng = parseFloat(lng);
+  const maxIter = 5;
+  const cropSize = 500;
+  const leafletElement = document.querySelector('.leaflet-container');
+
+  // nascondi tutto fin da subito
+  setHideMarkers(true);
+  toggleCaptureUiHidden(true);
+
+  try {
+    for (let step = 1; step <= maxIter; step++) {
+      const parent = leafletElement.parentElement;
+      const originalTransform = parent.style.transform;
+      parent.style.transform = "none";
+      try {
+        await new Promise(r => requestAnimationFrame(r));
+        await waitForMapToSettle(mapRef.current);
+
+        const fullCanvas = await html2canvas(leafletElement, {
+          useCORS: true,
+          backgroundColor: null,
+          allowTaint: true,
+          logging: false,
+          scale: 1
+        });
+
+        const rect = leafletElement.getBoundingClientRect();
+        const scaleFactor = fullCanvas.width / rect.width;
+        const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+        const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+
+        const cropped = document.createElement('canvas');
+        cropped.width = cropSize;
+        cropped.height = cropSize;
+        const ctx = cropped.getContext('2d');
+        ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+        const imageData = cropped.toDataURL();
+
+        const body = {
+          chk: idCabina,
+          zoom: mapRef.current?.getZoom() ?? 18,
+          crop_size: cropSize,
+          image: imageData,
+          bearing: mapRef.current?.getBearing?.() ?? 0
+        };
+        if (step > 1) { body.lat = currentLat; body.lng = currentLng; }
+
+        const resp = await fetch("http://localhost:8000/update_centered_coord", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+          alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
+          return;
+        }
+
+        currentLat = result.new_lat;
+        currentLng = result.new_lng;
+        setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
+        setCoords([currentLat, currentLng]);
+        if (mapRef.current) mapRef.current.setView([currentLat, currentLng], 18);
+
+        if (result.done) break;
+        await new Promise(r => setTimeout(r, 200));
+      } finally {
+        parent.style.transform = originalTransform;
+      }
+    }
+  } finally {
+    toggleCaptureUiHidden(false);
+    setHideMarkers(false);
+  }
+}
+
+  return (
+    <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      {/* SIDEBAR SINISTRA */}
+      <MapControls
+          lat={lat} setLat={setLat}
+          lng={lng} setLng={setLng}
+          idCabina={idCabina} setIdCabina={setIdCabina}
+          setCoords={(newCoords) => {
+              setCoords(newCoords);
+              // setAutoZoom(false); // ❌ niente zoom automatico
+          }}
+          setPolygonData={setPolygonData}
+          setCaptureMode={setCaptureMode}
+          mapRef={mapRef}
+          capturedImage={capturedImage}
+          setZoomLevel={setZoomLevel}
+          setPendingFlyTo={setPendingFlyTo}
+          setCapturedImage={setCapturedImage}
+          setArmonizedMarker={setArmonizedMarker}
+          armonizzaCabinaAuto={armonizzaCabinaAuto}
+          analizzaCabina={analizzaCabina}
+          isAnalisiLoading={isAnalisiLoading}
+          centerCoords={centerCoords}
+          captureParams={captureParams}
+          optionsTipoCabina={optionsTipoCabina}
+          optionsAreaRegionale={optionsAreaRegionale}
+          optionsRegione={optionsRegione}
+          optionsProvSuggerite={optionsProvSuggerite}
+          filtroTipoCabina={filtroTipoCabina}
+          setFiltroTipoCabina={setFiltroTipoCabina}
+          filtroArea={filtroArea}
+          setFiltroArea={setFiltroArea}
+          filtroRegione={filtroRegione}
+          setFiltroRegione={setFiltroRegione}
+          filtroProvincia={filtroProvincia}
+          setFiltroProvincia={setFiltroProvincia}
+          soloInVista={soloInVista}
+          setSoloInVista={setSoloInVista}
+          conteggioFiltrate={conteggioFiltrate}
+          selectedFromMarker={selectedFromMarker}
+          setSelectedFromMarker={setSelectedFromMarker}
+          runBatchSelection={runBatchSelection}
+      />
+
+      {/* MAPPA CENTRALE */}
+      <div
+        className="map-rotator"
+        style={{
+          width: '100%'
+        }}
+      >
+        <MapView
+          coords={coords}
+          polygonData={polygonData}
+          // autoZoom={autoZoom}
+          mapRef={mapRef}
+          setCenterCoords={setCenterCoords}
+          armonizedMarker={armonizedMarker}
+          hideMarkers={hideMarkers}
+          setZoomLevel={setZoomLevel}
+          setLat={setLat}
+          setLng={setLng}
+          setIdCabina={setIdCabina}
+          lat={lat}
+          lng={lng}
+          cabine={cabineFiltrate}
+          idCabina={idCabina}
+          setMapBounds={setMapBounds}
+          filtroArea={filtroArea}
+          fetchSeq={fetchSeqRef.current}
+          setSelectedFromMarker={setSelectedFromMarker}
+        />
+      </div>
+
+      {/* CROCE ROSSA */}
+      <div className="capture-hide" style={{
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 1002,
+        pointerEvents: 'none'
+      }}>
+        <div style={{
+          width: 20,
+          height: 20,
+          borderLeft: '2px solid red',
+          borderTop: '2px solid red',
+          transform: 'rotate(45deg)'
+        }} />
+      </div>
+        {/* ZOOM LEVEL IN ALTO A SINISTRA */}
+        <div className="capture-hide" style={{
+          position: 'absolute',
+          top: 10,
+          left: 350,
+          zIndex: 1000,
+          background: 'white',
+          padding: '4px 8px',
+          borderRadius: '4px',
+          boxShadow: '0 0 4px rgba(0,0,0,0.2)',
+          fontSize: 14
+        }}>
+          <strong>Zoom:</strong> {zoomLevel}
+        </div>
+      {/* INFO LAT LNG */}
+      <div className="capture-hide" style={{
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        zIndex: 1000,
+        background: 'white',
+        padding: 5
+      }}>
+        <strong>Lat:</strong> {centerCoords[0]}<br />
+        <strong>Lng:</strong> {centerCoords[1]}
+      </div>
+
+      {/* ROTAZIONE */}
+      <div className="capture-hide" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 1000 }}>
+         <button onClick={() => setRotation(r => r - 5)}>↺ Ruota -5°</button>
+         <button onClick={() => setRotation(r => r + 5)}>↻ Ruota +5°</button>
+         <button onClick={() => setRotation(0)}>⟳ Reset</button>
+      </div>
+
+      {/* BUSSOLA */}
+      <div className="capture-hide" style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 1000 }}>
+        <img
+          src="/compass.png"
+          alt="Bussola"
+          style={{ width: 60, height: 60, transform: `rotate(${-rotation}deg)` }}
+        />
+      </div>
+
+      {/* OVERLAY FOTO */}
+      {captureMode && (
+          <CenterShot
+            mapRef={mapRef}
+            centerCoords={centerCoords}
+            onConfirm={(imgDataUrl, params) => {
+              setCapturedImage(imgDataUrl);
+              setCaptureParams(params);
+              setCaptureMode(false);
+            }}
+            onCancel={() => setCaptureMode(false)}
+            setHideMarkers={setHideMarkers}
+          />
+        )}
+        <BatchConsole
+          open={consoleOpen}
+          onClose={() => setConsoleOpen(false)}
+          progress={consoleProgress}
+          status={consoleStatus}
+          logs={consoleLogs}
+        />
+    </div>
+  );
+}
+
+export default App;
+
+================================================================================
+
+### METADATI FINALI ###
+{
+  "root": "C:\\Users\\matte\\PycharmProjects\\cabina-app",
+  "generated_at": "2025-08-25T14:09:31.120260Z",
+  "sections": [
+    "backend",
+    "frontend/src(App.js)"
+  ],
+  "files": [
+    "backend\\ai_client.py",
+    "backend\\db.py",
+    "backend\\main.py",
+    "backend\\schemas.py",
+    "backend\\ai_microservice\\ai_api.py",
+    "backend\\armonizzazione_single_cabin\\coord_optimizer.py",
+    "backend\\armonizzazione_single_cabin\\router.py",
+    "frontend\\src\\App.js"
+  ],
+  "global_hash": "be3bad53bce3f7b09551f062b5bbddf96585a41c29d7e06970d96aac7973ed36"
+}
