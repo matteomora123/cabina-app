@@ -9,8 +9,13 @@ from db import SessionLocal
 import httpx
 from fastapi.responses import JSONResponse
 from typing import List, Optional
+import asyncio
 
 app = FastAPI()
+limits = httpx.Limits(max_keepalive_connections=5, max_connections=8)
+timeout = httpx.Timeout(60.0)
+ai_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+ai_semaphore = asyncio.Semaphore(4)  # max 4 richieste AI contemporanee
 
 FAKE_CABINE = [
     {"id": 37259, "id_cab": 51844, "denom": "VASTO", "tipo_nodo": "AM", "chk": "DJ001380914", "tipo_cabina": "e-distribuzione", "area_regionale": "AREA ABRUZZO MARCHE E MOLISE", "regione": "ABRUZZO", "provincia": "CH", "lng": 14.694731762253099, "lat": 42.1511083275595},
@@ -307,10 +312,9 @@ async def get_province(tipo: list[str] = None, area: str | None = None, regione:
 
 @app.post("/segmenta")
 async def segmenta_cabina(req: AIRequest):
-    timeout = httpx.Timeout(60.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
+        async with ai_semaphore:  # back-pressure
+            response = await ai_client.post(
                 "http://localhost:9000/segmenta_ai",
                 json={
                     "image": req.image,
@@ -327,3 +331,7 @@ async def segmenta_cabina(req: AIRequest):
         return JSONResponse(status_code=504, content={"detail": "Timeout: l'analisi AI è troppo lenta."})
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": f"Errore AI: {str(e)}"})
+
+@app.on_event("shutdown")
+async def _close_clients():
+    await ai_client.aclose()

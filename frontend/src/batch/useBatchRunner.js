@@ -3,6 +3,7 @@ import html2canvas from "html2canvas";
 import * as XLSX from "xlsx";
 import { BATCH_SETTINGS } from "./config";
 import { convertPolygonData } from "../utils/geo";
+import { captureMapShot, waitForMapToSettleStrict } from "../utils/capture-guards";
 
 export function useBatchRunner({
   mapRef,
@@ -157,55 +158,40 @@ export function useBatchRunner({
 
   // ---------- scatto finale pulito ----------
   async function scatta(map, settings) {
-    const leafletEl = document.querySelector(".leaflet-container");
-    const parent = leafletEl.parentElement;
-    const originalTransform = parent.style.transform;
-    parent.style.transform = "none";
+  const leafletEl = document.querySelector(".leaflet-container");
+  const parent = leafletEl.parentElement;
+  const originalTransform = parent.style.transform;
+  parent.style.transform = "none";
 
-    await beginCleanCapture();
-    try {
-      const rect = leafletEl.getBoundingClientRect();
-      const full = await html2canvas(leafletEl, {
-        useCORS: true,
-        backgroundColor: null,
-        allowTaint: true,
-        logging: false,
-        scale: settings.html2canvasScale,
-      });
+  await beginCleanCapture();
+  try {
+    // attesa stretta (tile vere)
+    await waitForMapToSettleStrict(mapRef.current, { minLoaded: 3, maxWaitMs: 1200 });
 
-      const scale = full.width / rect.width;
-      const crop = settings.cropSize;
-      const cx = (rect.width / 2 - crop / 2) * scale;
-      const cy = (rect.height / 2 - crop / 2) * scale;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = crop;
-      canvas.height = crop;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(
-        full,
-        cx,
-        cy,
-        crop * scale,
-        crop * scale,
-        0,
-        0,
-        crop,
-        crop
-      );
-
-      const dataUrl = canvas.toDataURL();
-      return {
-        dataUrl,
-        crop,
-        zoom: map?.getZoom() ?? settings.targetZoom,
-        bearing: map?.getBearing?.() ?? 0,
-      };
-    } finally {
-      endCleanCapture();
-      parent.style.transform = originalTransform;
+    // cattura con retry su “foto nere”
+    const crop = settings.cropSize;
+    let dataUrl;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        dataUrl = await captureMapShot(mapRef, { crop, scale: settings.html2canvasScale });
+        break;
+      } catch (e) {
+        if (e.message !== "black-capture" || attempt === 1) throw e;
+        await new Promise(r => setTimeout(r, 400)); // breve respiro e riprova
+      }
     }
+
+    return {
+      dataUrl,
+      crop,
+      zoom: map?.getZoom() ?? settings.targetZoom,
+      bearing: map?.getBearing?.() ?? 0,
+    };
+  } finally {
+    endCleanCapture();
+    parent.style.transform = originalTransform;
   }
+}
 
   // ---------- chiamata AI ----------
   async function segmenta({ image, center, crop, zoom }, setLogs) {

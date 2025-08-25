@@ -5,12 +5,17 @@ from typing import Optional
 from shapely.geometry import Polygon
 import httpx
 import math
+import asyncio
 
-# ---- Parametri configurabili
+# pool HTTPX condiviso e timeout "prod"
+limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+timeout = httpx.Timeout(20.0)
+_ai_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+ # ---- Parametri configurabili
 MAX_ITER = 5
 CENTER_TOLERANCE_PX = 20
 MIN_DENSITY_IMPROVEMENT = 10
-
+AI_SEMAPHORE = asyncio.Semaphore(4)
 # ---- Modelli dati
 class CoordinateOptimizationRequest(BaseModel):
     chk: str
@@ -100,6 +105,7 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
             raise HTTPException(status_code=400, detail="Immagine base64 mancante o troppo corta")
 
         # 2. Coordinate iniziali
+
         if req.lat is not None and req.lng is not None:
             lat, lng = req.lat, req.lng
         else:
@@ -123,26 +129,28 @@ async def ottimizza_coordinata(req: CoordinateOptimizationRequest) -> Coordinate
 
         # 3. Tentativi di chiamata a /segmenta_ai (max 2 tentativi)
         while attempt < MAX_ATTEMPTS and not found:
-            print(f"Tentativo segmentazione AI n.{attempt+1}")
-            async with httpx.AsyncClient() as client:
-                payload = {
-                    "image": req.image,
-                    "lat": lat,
-                    "lng": lng,
-                    "zoom": zoom,
-                    "crop_width": crop_size,
-                    "crop_height": crop_size,
-                }
-                seg_res = await client.post("http://localhost:9000/segmenta_ai", json=payload)
-                print(f"Risposta AI status: {seg_res.status_code}")
-                seg_data = seg_res.json()
-                poligoni = seg_data.get("poligoni", [])
-                print(f"Poligoni ricevuti: {len(poligoni)}")
-                stalli_at = [p for p in poligoni if p["label"] == "Stalli AT" and len(p["points"]) >= 3]
-                print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
-                if stalli_at:
-                    found = True
-                    break
+            print(f"Tentativo segmentazione AI n.{attempt + 1}")
+            payload = {
+                "image": req.image,
+                "lat": lat,
+                "lng": lng,
+                "zoom": zoom,
+                "crop_width": crop_size,
+                "crop_height": crop_size,
+            }
+            # limita concorrenza verso il microservizio AI e riusa la connessione
+            async with AI_SEMAPHORE:
+                seg_res = await _ai_client.post("http://localhost:9000/segmenta_ai", json=payload)
+
+            print(f"Risposta AI status: {seg_res.status_code}")
+            seg_data = seg_res.json()
+            poligoni = seg_data.get("poligoni", [])
+            print(f"Poligoni ricevuti: {len(poligoni)}")
+            stalli_at = [p for p in poligoni if p.get("label") == "Stalli AT" and len(p.get("points", [])) >= 3]
+            print(f"Poligoni Stalli AT trovati: {len(stalli_at)}")
+            if stalli_at:
+                found = True
+                break
             attempt += 1
 
         if not found:

@@ -1,6 +1,6 @@
-#backend/ai_microservice/ai_api.py
+# backend/ai_microservice/ai_api.py
 
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from io import BytesIO
 import base64
@@ -11,6 +11,9 @@ from transformers import SegformerForSemanticSegmentation, SegformerFeatureExtra
 import cv2
 import os
 from datetime import datetime
+
+# Abilita autotuning delle convoluzioni (utile quando le dimensioni input si ripetono)
+torch.backends.cudnn.benchmark = True
 
 # ======= MAPPING CLASSI CVAT =======
 CVAT_CLASSES = [
@@ -34,8 +37,12 @@ print("Caricamento modello e feature_extractor...")
 model = SegformerForSemanticSegmentation.from_pretrained(MODEL_PATH)
 feature_extractor = SegformerFeatureExtractor.from_pretrained(MODEL_PATH)
 model.eval()
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
+# Usa FP16 su GPU per inferenza più veloce/leggera
+if device.type == "cuda":
+    model.half()
 
 app = FastAPI()
 
@@ -50,13 +57,16 @@ def overlay_mask_on_image(image, pred, alpha=0.45):
     overlay = (image * (1 - alpha) + mask_rgb * alpha).astype(np.uint8)
     return overlay
 
-def save_overlay(img, pred):
-    # Crea nome file unico con data + progressivo
+def save_overlay(img, pred, out_dir: str = OUTPUT_DIR):
+    """
+    Scrive l'overlay su disco. Funzione 'stateless' così può essere lanciata in background
+    senza interferenze con la risposta HTTP.
+    """
     base_name = datetime.now().strftime("%Y%m%d")
     prog = 1
     while True:
         out_name = f"{base_name}_{prog}.jpg"
-        out_path = os.path.join(OUTPUT_DIR, out_name)
+        out_path = os.path.join(out_dir, out_name)
         if not os.path.exists(out_path):
             break
         prog += 1
@@ -65,27 +75,35 @@ def save_overlay(img, pred):
     print(f"[SALVATO] Overlay maschera: {out_path}")
 
 @app.post("/segmenta_ai")
-def segmenta_ai(req: SegmentRequest):
+async def segmenta_ai(req: SegmentRequest, background_tasks: BackgroundTasks):
     try:
         print("\n--- DEBUG ---\nRicevuta immagine base64 di lunghezza:", len(req.image))
         header, encoded = req.image.split(',', 1)
         img = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
         print("Immagine decodificata, shape:", img.size)
 
-        # Preprocessing e predizione
+        # Preprocessing
         inputs = feature_extractor(images=img, return_tensors="pt")
         inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        # Inferenza no-grad; se GPU, usa mixed precision (autocast)
         with torch.no_grad():
-            outputs = model(**inputs)
-        pred = outputs.logits.argmax(dim=1).squeeze().cpu().numpy()
+            if device.type == "cuda":
+                from torch.cuda.amp import autocast
+                with autocast():
+                    outputs = model(**inputs)
+            else:
+                outputs = model(**inputs)
+
+        pred = outputs.logits.argmax(dim=1).squeeze().detach().to("cpu").numpy()
 
         # Resize predizione alla shape dell'immagine originale
         pred = np.array(
             Image.fromarray(pred.astype(np.uint8)).resize(img.size, resample=Image.NEAREST)
         )
 
-        # Salva overlay maschera per debug
-        save_overlay(img, pred)
+        # Salva overlay in background per non bloccare la risposta
+        background_tasks.add_task(save_overlay, img, pred)
 
         uniq, counts = np.unique(pred, return_counts=True)
         print("Classi pixel predetti e conteggi:", dict(zip(uniq, counts)))
@@ -95,14 +113,15 @@ def segmenta_ai(req: SegmentRequest):
             if class_id == 0:
                 continue
             mask = (pred == class_id).astype(np.uint8)
-            n_pixels = np.sum(mask)
+            n_pixels = int(mask.sum())
             print(f"Classe {class_id} ({ID_TO_CLASS[class_id]['label']}): {n_pixels} pixel da segmentare")
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             print(f"  -> {len(contours)} poligoni trovati per classe {class_id}")
             for cnt in contours:
                 if len(cnt) > 2:
                     poly = cnt.squeeze().tolist()
-                    if isinstance(poly[0], int): poly = [poly]
+                    if isinstance(poly[0], int):
+                        poly = [poly]
                     class_info = ID_TO_CLASS.get(int(class_id), {"label": str(class_id), "color": "#222"})
                     results.append({
                         "points": poly,
@@ -110,8 +129,10 @@ def segmenta_ai(req: SegmentRequest):
                         "color": class_info["color"],
                         "tipo": class_info["label"]
                     })
+
         print("Restituisco", len(results), "poligoni totali\n--- DEBUG FINE ---")
         return {"poligoni": results}
+
     except Exception as e:
         print("ERRORE backtrace:", e)
         return {"errore": str(e)}
