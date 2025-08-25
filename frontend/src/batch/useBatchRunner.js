@@ -85,6 +85,7 @@ export function useBatchRunner({
 
       await beginCleanCapture();
       try {
+        // scatto veloce per armonizzazione
         const rect = leafletEl.getBoundingClientRect();
         const full = await html2canvas(leafletEl, {
           useCORS: true,
@@ -113,7 +114,7 @@ export function useBatchRunner({
           crop,
           crop
         );
-        const imageData = canvas.toDataURL();
+        const imageData = canvas.toDataURL("image/jpeg", 0.88);
 
         const body = {
           chk,
@@ -139,7 +140,10 @@ export function useBatchRunner({
         currentLng = result.new_lng;
         setArmonizedMarker({ lat: currentLat, lng: currentLng, chk });
         setCoords([currentLat, currentLng]);
-        map?.setView([currentLat, currentLng], settings.targetZoom);
+
+        // evita animazioni (niente moveend/zoomend)
+        map?.setView([currentLat, currentLng], settings.targetZoom, { animate: false });
+        await raf2();
 
         pushLog(
           setLogs,
@@ -157,7 +161,8 @@ export function useBatchRunner({
   }
 
   // ---------- scatto finale pulito ----------
-  async function scatta(map, settings) {
+  // dentro src/batch/useBatchRunner.js
+async function scatta(map, settings) {
   const leafletEl = document.querySelector(".leaflet-container");
   const parent = leafletEl.parentElement;
   const originalTransform = parent.style.transform;
@@ -165,19 +170,34 @@ export function useBatchRunner({
 
   await beginCleanCapture();
   try {
-    // attesa stretta (tile vere)
-    await waitForMapToSettleStrict(mapRef.current, { minLoaded: 3, maxWaitMs: 1200 });
+    const strictMs = settings.captureStrictWaitMs ?? 900; // attesa stretta < 1s
+    const minTiles = settings.captureMinTiles ?? 8;       // più tile -> meno neri
+    await waitForMapToSettleStrict(mapRef.current, {
+      minLoaded: minTiles,
+      maxWaitMs: strictMs,
+    });
 
-    // cattura con retry su “foto nere”
     const crop = settings.cropSize;
     let dataUrl;
-    for (let attempt = 0; attempt < 2; attempt++) {
+
+    // retry robusto sui frame neri
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        dataUrl = await captureMapShot(mapRef, { crop, scale: settings.html2canvasScale });
-        break;
+        dataUrl = await captureMapShot(mapRef, {
+          crop,
+          scale: settings.html2canvasScale,
+          mime: "image/jpeg",
+          quality: 0.88,
+        });
+        break; // ok
       } catch (e) {
-        if (e.message !== "black-capture" || attempt === 1) throw e;
-        await new Promise(r => setTimeout(r, 400)); // breve respiro e riprova
+        if (e.message !== "black-capture" || attempt === 3) throw e;
+        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => requestAnimationFrame(r));
+        await waitForMapToSettleStrict(mapRef.current, {
+          minLoaded: minTiles,
+          maxWaitMs: 400,
+        });
       }
     }
 
@@ -241,19 +261,29 @@ export function useBatchRunner({
       pushLog(ui.setLogs, `Cabina ${i + 1}/${total} [${label}]`);
 
       try {
-        map?.setView([+c.lat, +c.lng], settings.targetZoom, { animate: true });
-        await new Promise((r) => setTimeout(r, 350));
+        // ---- DOVE CAMBIARE LA CENTRATURA ----
+        // Niente animazione: 0 eventi 'moveend/zoomend', una resa di frame e via
+        map?.setView([+c.lat, +c.lng], settings.targetZoom, { animate: false });
+        await raf2();
 
+        const tArm0 = performance.now();
         const { lat, lng } = await armonizzaSingola(
           { chk: c.chk, lat: c.lat, lng: c.lng },
           ui.setLogs,
           settings
         );
+        const tArm = Math.round(performance.now() - tArm0);
+        pushLog(ui.setLogs, `⏱️ armonizza: ${tArm} ms`);
 
         pushLog(ui.setLogs, `Scatto a zoom ${settings.targetZoom}…`);
+        const tCap0 = performance.now();
         const shot = await scatta(map, settings);
+        const tCap = Math.round(performance.now() - tCap0);
+        pushLog(ui.setLogs, `⏱️ capture: ${tCap} ms`);
 
         const centerCoords = getCenterCoords(); // letti dall’overlay live
+
+        const tSeg0 = performance.now();
         const poligoniPx = await segmenta(
           {
             image: shot.dataUrl,
@@ -263,6 +293,8 @@ export function useBatchRunner({
           },
           ui.setLogs
         );
+        const tSeg = Math.round(performance.now() - tSeg0);
+        pushLog(ui.setLogs, `⏱️ segmenta: ${tSeg} ms`);
 
         const converted = convertPolygonData(poligoniPx, {
           crop_width: shot.crop,

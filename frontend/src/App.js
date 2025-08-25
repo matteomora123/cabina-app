@@ -68,11 +68,19 @@ async function waitForTilesComplete(container, timeoutMs = 4000) {
 }
 
 // Cattura robusta + crop centrale, con attese su mappa e tile
-async function snapshotMapCrop(leafletElement, map, cropSize = 500) {
-  await new Promise(r => requestAnimationFrame(r));                // 1 frame
-  await waitForMapToSettle(map);                                   // mappa idle
-  await waitForTilesComplete(leafletElement, 4000);                 // tile pronte
-  await new Promise(r => requestAnimationFrame(r));                 // paint finale
+// Cattura robusta + crop centrale, con attese configurabili (e JPEG)
+async function snapshotMapCrop(
+  leafletElement,
+  map,
+  cropSize = 500,
+  { tilesTimeoutMs = 0, settleMs = 250, mime = "image/jpeg", quality = 0.9 } = {}
+) {
+  await new Promise(r => requestAnimationFrame(r));      // 1 frame
+  await waitForMapToSettle(map, settleMs);               // mappa quasi-idle
+  if (tilesTimeoutMs > 0) {
+    await waitForTilesComplete(leafletElement, tilesTimeoutMs);  // attesa tile breve
+  }
+  await new Promise(r => requestAnimationFrame(r));      // paint finale
 
   const fullCanvas = await html2canvas(leafletElement, {
     useCORS: true,
@@ -86,14 +94,21 @@ async function snapshotMapCrop(leafletElement, map, cropSize = 500) {
   const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
   const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
 
-  const cropped = document.createElement('canvas');
+  const cropped = document.createElement("canvas");
   cropped.width = cropSize;
   cropped.height = cropSize;
-  const ctx = cropped.getContext('2d');
-  ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
-  return cropped.toDataURL();
-}
+  const ctx = cropped.getContext("2d");
+  ctx.drawImage(
+    fullCanvas,
+    cx, cy,
+    cropSize * scaleFactor, cropSize * scaleFactor,
+    0, 0,
+    cropSize, cropSize
+  );
 
+  // JPEG più veloce/leggero del PNG
+  return cropped.toDataURL(mime, quality);
+}
 
 function toggleCaptureUiHidden(hide) {
   document.querySelectorAll('.capture-hide').forEach((el) => {
@@ -625,32 +640,38 @@ function MapView({ coords, polygonData, cabine, mapRef, setCenterCoords, hideMar
 
     console.log("MapView polygonData:", polygonData);
   return (
-    <MapContainer
-        center={coords} // oppure la tua posizione iniziale
-        rotate={true}
-        touchRotate={true}
-        zoom={6}
-        zoomSnap={0.1}
-        zoomDelta={0.1}
-        wheelPxPerZoomLevel={80}
-        className="rotatable-map"
-        style={{ height: "100vh", width: "100%" }}
-        whenReady={(mapInstance) => {
-          mapRef.current = mapInstance.target;
-          setZoomLevel(mapInstance.target.getZoom()); // <- aggiungi questa riga
-      }}
-    >
+        <MapContainer
+          center={coords}
+          rotate={true}
+          touchRotate={true}
+          zoom={6}
+          zoomAnimation={false}
+          fadeAnimation={false}
+          markerZoomAnimation={false}
+          zoomSnap={0.1}
+          zoomDelta={0.1}
+          wheelPxPerZoomLevel={80}
+          className="rotatable-map"
+          style={{ height: "100vh", width: "100%" }}
+          whenReady={(mapInstance) => {
+            mapRef.current = mapInstance.target;
+            setZoomLevel(mapInstance.target.getZoom());
+          }}
+        >
         <Pane name="underlay" style={{ zIndex: 390 }} />
         <Pane name="overlay"  style={{ zIndex: 410 }} />
        <CenterTracker setCenterCoords={setCenterCoords} />
         <ZoomTracker setZoomLevel={setZoomLevel} />
         <BoundsTracker setMapBounds={setMapBounds} />
       <TileLayer
-        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        crossOrigin="anonymous"
-        attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
-        maxZoom={22}
-      />
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          crossOrigin="anonymous"
+          attribution='&copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics'
+          maxZoom={22}
+          keepBuffer={2}        // mantiene i vecchi tile mentre carica i nuovi
+          updateWhenIdle={true} // aggiorna meno durante pan/zoom (meno fade)
+         />
+
 
       {!hideMarkers && (
         <MarkerClusterGroup key={`${filtroArea || 'ALL'}|${fetchSeq}`}>
@@ -746,17 +767,21 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
   const map = mapRef.current;
 
   try {
-    // nascondi il riquadro, NON toccare i transform del parent
+        // nascondi overlay/UI
     overlayRef.current.style.visibility = "hidden";
     setHideMarkers(true);
     toggleCaptureUiHidden(true);
 
+    // un frame al layout; NIENTE waitForMapToSettle / waitForTilesComplete qui
     await new Promise(r => requestAnimationFrame(r));
-    await waitForMapToSettle(map);
-    await waitForTilesComplete(leafletElement, 4000);
 
     const cropSize = 500;
-    const dataUrl = await snapshotMapCrop(leafletElement, map, cropSize);
+    const dataUrl = await snapshotMapCrop(leafletElement, map, cropSize, {
+      tilesTimeoutMs: 800,  // più tollerante per lo scatto manuale
+      settleMs: 250,
+      mime: "image/jpeg",
+      quality: 0.9
+    });
 
     const zoom = map?.getZoom() ?? 19;
     const center = centerCoords || [0, 0];
@@ -886,14 +911,36 @@ function App() {
   const [consoleProgress, setConsoleProgress] = useState(0);
   const [consoleStatus, setConsoleStatus] = useState("");
   const batch = useBatchRunner({
-      mapRef,
-      setCoords,
-      setHideMarkers,
-      setArmonizedMarker,
-      getCenterCoords: () => centerCoords,
-      setPolygonData,                               // <--- nuovo
-      drawPolygons: DRAW_POLYGONS_DURING_BATCH,     // <--- nuovo
+  mapRef,
+  setCoords,
+  setHideMarkers,
+  setArmonizedMarker,
+  getCenterCoords: () => centerCoords,
+  setPolygonData,
+  drawPolygons: DRAW_POLYGONS_DURING_BATCH,
+
+  // 👇 NUOVO: scatto veloce riusando snapshotMapCrop
+  captureFrame: async () => {
+    const map = mapRef.current;
+    const el = document.querySelector(".leaflet-container");
+    const cropSize = 500;
+
+    const dataUrl = await snapshotMapCrop(el, map, cropSize, {
+      tilesTimeoutMs: 250,   // breve
+      settleMs: 200,         // breve
+      mime: "image/jpeg",
+      quality: 0.88
     });
+
+    return {
+      dataUrl,
+      cropSize,
+      zoom: map?.getZoom?.() ?? 18,
+      bearing: map?.getBearing?.() ?? 0
+    };
+  }
+});
+
 
 
   useEffect(() => {
@@ -1171,15 +1218,17 @@ function App() {
   const map = mapRef.current;
 
   for (let step = 1; step <= maxIter; step++) {
-
     try {
-      // assicurati che la mappa sia “idle” e le tile pronte
+      // un frame al layout; niente attese lente qui
       await new Promise(r => requestAnimationFrame(r));
-      await waitForMapToSettle(map);
-      await waitForTilesComplete(leafletElement, 4000);
 
-      // scatto
-      const imageData = await snapshotMapCrop(leafletElement, map, cropSize);
+      // SCATTO "VELOCE" (attese interne ridotte + JPEG)
+      const imageData = await snapshotMapCrop(leafletElement, map, cropSize, {
+        tilesTimeoutMs: 250,   // invece di 4000ms
+        settleMs: 200,
+        mime: "image/jpeg",
+        quality: 0.88
+      });
 
       // chiamata backend
       const body = {
@@ -1208,12 +1257,12 @@ function App() {
       setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
       setCoords([currentLat, currentLng]);
 
-      // niente animazioni (evita attese di 'zoomend'/'moveend')
+      // niente animazioni (evita altre attese)
       map?.setView([currentLat, currentLng], 18, { animate: false });
 
       if (result.done) break;
 
-      // piccola pausa tra gli step
+      // micro pausa
       await new Promise(r => setTimeout(r, 150));
     } finally {
       await new Promise(r => requestAnimationFrame(r));
