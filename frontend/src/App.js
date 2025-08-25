@@ -703,18 +703,20 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
   if (!overlayRef.current) return;
   const leafletElement = document.querySelector('.leaflet-container');
 
-  overlayRef.current.style.display = 'none';
-  setHideMarkers(true);
-  toggleCaptureUiHidden(true);         // <--- nascondi overlay esterni
-
   const originalTransform = leafletElement.parentElement.style.transform;
-  leafletElement.parentElement.style.transform = "none";
-
-  // lascia tempo al re-render e aspetta davvero la mappa
-  await new Promise(r => requestAnimationFrame(r));
-  await waitForMapToSettle(mapRef.current);
-
   try {
+    // nascondi overlay e UI
+    overlayRef.current.style.display = 'none';
+    setHideMarkers(true);
+    toggleCaptureUiHidden(true);
+    leafletElement.parentElement.style.transform = "none";
+
+    await new Promise(r => requestAnimationFrame(r));
+    await Promise.race([
+      waitForMapToSettle(mapRef.current),
+      new Promise(res => setTimeout(res, 1500))
+    ]);
+
     const fullCanvas = await html2canvas(leafletElement, {
       useCORS: true,
       backgroundColor: null,
@@ -750,7 +752,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
     });
   } finally {
     leafletElement.parentElement.style.transform = originalTransform;
-    toggleCaptureUiHidden(false);      // <--- ripristina overlay
+    toggleCaptureUiHidden(false);
     if (overlayRef.current) overlayRef.current.style.display = 'block';
     setHideMarkers(false);
   }
@@ -765,7 +767,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
         inset: 0,
         zIndex: 999,
         backgroundColor: 'rgba(0,0,0,0.35)',
-        pointerEvents: 'none' // lascia passare drag/zoom alla mappa
+        pointerEvents: 'none'
       }}
     >
       <div
@@ -798,7 +800,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
           alignItems: 'center',
           flexDirection: 'column',
           minWidth: 260,
-          pointerEvents: 'auto' // i pulsanti restano cliccabili
+          pointerEvents: 'auto'
         }}
       >
         <button
@@ -835,6 +837,7 @@ function CenterShot({ onConfirm, onCancel, setHideMarkers, mapRef, centerCoords 
     </div>
   );
 }
+
 
 function App() {
   // --- TUTTI GLI STATE DEI CAMPI IN APP
@@ -1150,68 +1153,72 @@ function App() {
   setHideMarkers(true);
   toggleCaptureUiHidden(true);
 
-  for (let step = 1; step <= maxIter; step++) {
-    const parent = leafletElement.parentElement;
-    const originalTransform = parent.style.transform;
-    parent.style.transform = "none";
-    try {
-      // assicurati che lo stato UI sia dipinto e la mappa sia a posto
-      await new Promise(r => requestAnimationFrame(r));
-      await waitForMapToSettle(mapRef.current);
+  try {
+    for (let step = 1; step <= maxIter; step++) {
+      const parent = leafletElement.parentElement;
+      const originalTransform = parent.style.transform;
+      parent.style.transform = "none";
+      try {
+        await new Promise(r => requestAnimationFrame(r));
+        await waitForMapToSettle(mapRef.current);
 
-      const fullCanvas = await html2canvas(leafletElement, {
-        useCORS: true,
-        backgroundColor: null,
-        allowTaint: true,
-        logging: false,
-        scale: 1
-      });
+        const fullCanvas = await html2canvas(leafletElement, {
+          useCORS: true,
+          backgroundColor: null,
+          allowTaint: true,
+          logging: false,
+          scale: 1
+        });
 
-      const rect = leafletElement.getBoundingClientRect();
-      const scaleFactor = fullCanvas.width / rect.width;
-      const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
-      const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
+        const rect = leafletElement.getBoundingClientRect();
+        const scaleFactor = fullCanvas.width / rect.width;
+        const cx = (rect.width / 2 - cropSize / 2) * scaleFactor;
+        const cy = (rect.height / 2 - cropSize / 2) * scaleFactor;
 
-      const cropped = document.createElement('canvas');
-      cropped.width = cropSize; cropped.height = cropSize;
-      const ctx = cropped.getContext('2d');
-      ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
-      const imageData = cropped.toDataURL();
+        const cropped = document.createElement('canvas');
+        cropped.width = cropSize;
+        cropped.height = cropSize;
+        const ctx = cropped.getContext('2d');
+        ctx.drawImage(fullCanvas, cx, cy, cropSize * scaleFactor, cropSize * scaleFactor, 0, 0, cropSize, cropSize);
+        const imageData = cropped.toDataURL();
 
-      const body = {
-        chk: idCabina,
-        zoom: mapRef.current?.getZoom() ?? 18,
-        crop_size: cropSize,
-        image: imageData,
-        bearing: mapRef.current?.getBearing?.() ?? 0
-      };
-      if (step > 1) { body.lat = currentLat; body.lng = currentLng; }
+        const body = {
+          chk: idCabina,
+          zoom: mapRef.current?.getZoom() ?? 18,
+          crop_size: cropSize,
+          image: imageData,
+          bearing: mapRef.current?.getBearing?.() ?? 0
+        };
+        if (step > 1) { body.lat = currentLat; body.lng = currentLng; }
 
-      const resp = await fetch("http://localhost:8000/update_centered_coord", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-      });
-      const result = await resp.json();
-      if (!resp.ok) { alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto")); return; }
+        const resp = await fetch("http://localhost:8000/update_centered_coord", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+          alert("Errore armonizzazione: " + (result.detail || "Errore sconosciuto"));
+          return;
+        }
 
-      currentLat = result.new_lat; currentLng = result.new_lng;
-      setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
-      setCoords([currentLat, currentLng]);
-      if (mapRef.current) mapRef.current.setView([currentLat, currentLng], 18);
+        currentLat = result.new_lat;
+        currentLng = result.new_lng;
+        setArmonizedMarker({ lat: currentLat, lng: currentLng, chk: idCabina });
+        setCoords([currentLat, currentLng]);
+        if (mapRef.current) mapRef.current.setView([currentLat, currentLng], 18);
 
-      if (result.done) break;
-
-      // piccolo respiro per il prossimo giro
-      await new Promise(r => setTimeout(r, 200));
-    } finally {
-      parent.style.transform = originalTransform;
+        if (result.done) break;
+        await new Promise(r => setTimeout(r, 200));
+      } finally {
+        parent.style.transform = originalTransform;
+      }
     }
+  } finally {
+    toggleCaptureUiHidden(false);
+    setHideMarkers(false);
   }
-
-  // ripristina UI
-  toggleCaptureUiHidden(false);
-  setHideMarkers(false);
 }
-
 
   return (
     <div className="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
